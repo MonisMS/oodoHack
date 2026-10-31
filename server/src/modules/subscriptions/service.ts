@@ -23,6 +23,7 @@ interface NewSubscription { customerId: string; planId: string; startDate: strin
 
 export const subscriptionInclude = {
   plan: true,
+  customer: { select: { name: true, email: true } },
   lines: { orderBy: { position: 'asc' } },
   history: { orderBy: [{ createdAt: 'asc' }, { id: 'asc' }] },
 } satisfies Prisma.SubscriptionInclude;
@@ -33,7 +34,7 @@ type Row = Prisma.SubscriptionGetPayload<{ include: typeof include }>;
 export function toSubscriptionDto(s: Row) {
   const expiryDate = s.expiryDate ? dateOnly(s.expiryDate) : null;
   return {
-    id: s.id, number: s.number, customerId: s.customerId, planId: s.planId, templateId: s.templateId, status: s.status,
+    id: s.id, number: s.number, customerId: s.customerId, customerName: s.customer.name, customerEmail: s.customer.email, planId: s.planId, planName: s.plan.name, planBillingPeriod: s.plan.billingPeriod, templateId: s.templateId, status: s.status,
     startDate: dateOnly(s.startDate), expiryDate, nextInvoiceDate: dateOnly(s.nextInvoiceDate),
     billingAnchorDay: s.billingAnchorDay, billingAnchorMonth: s.billingAnchorMonth, paymentTermsDays: s.paymentTermsDays, notes: s.notes,
     lines: s.lines.map(l => ({ id: l.id, subscriptionId: l.subscriptionId, productId: l.productId, variantId: l.variantId, description: l.description, quantity: l.quantity, unitPrice: l.unitPrice.toFixed(2), position: l.position })),

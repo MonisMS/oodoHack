@@ -41,7 +41,7 @@ export function toInvoiceDto(i: InvoiceWithRelations, today = todayBusiness()) {
       id: l.id, invoiceId: l.invoiceId, kind: l.kind, productId: l.productId, variantId: l.variantId, discountId: l.discountId, description: l.description, quantity: l.quantity,
       unitPrice: l.unitPrice.toFixed(2), subtotal: l.subtotal.toFixed(2), taxTotal: l.taxTotal.toFixed(2), total: l.total.toFixed(2), taxes: l.taxes as unknown as Array<Pick<FrozenTax,'taxId'|'name'|'percentage'|'amount'> & Partial<Pick<FrozenTax,'taxableBase'|'grossBase'|'discountAmount'|'discounts'>>>, position: l.position,
     })),
-    payments: i.payments.map(toPaymentDto),
+    payments: i.payments.map(p => toPaymentDto(p, { number: i.number, customerName: i.customerName })),
     discountUsages: i.discountUsages.map(u => ({ id: u.id, discountId: u.discountId, invoiceId: u.invoiceId, amount: u.amount.toFixed(2), createdAt: u.createdAt.toISOString() })),
     createdAt: i.createdAt.toISOString(), updatedAt: i.updatedAt.toISOString(),
   };

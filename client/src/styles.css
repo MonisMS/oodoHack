@@ -4,6 +4,9 @@
 body { @apply m-0 bg-slate-50 font-sans text-slate-900 antialiased; }
 button, a, select, input { @apply focus-visible:outline focus-visible:outline-2 focus-visible:outline-offset-2 focus-visible:outline-brand-600; }
 @media print {
+  @page { size: A4; margin: 14mm; }
+  .invoice-document { font-size: 11pt; break-inside: avoid; }
+  .invoice-document table { break-inside: avoid; }
   aside, header, .no-print { display: none !important; }
   body { background: white; }
   main { max-width: none !important; padding: 0 !important; }
