@@ -1,47 +1,28 @@
 import type { SubscriptionStatus } from '@prisma/client';
+import { canTransition as domainCanTransition, allowedSubscriptionTransitions } from '../../lib/domain/states.js';
 
-// STAND-IN for B's lib/domain/states.ts (B-05). It encodes exactly the transition table in API_CONTRACT.md
-// and exposes the signature proposed in docs/A-01-agreements.md, so switching to B's export is a one-line import change.
+// A's published interface is retained as a thin adapter to B's single policy source.
 export type TransitionCheck = { ok: true } | { ok: false; reason: string };
 export interface SubscriptionContext {
   plan: { pausable: boolean; closableEarly: boolean; renewable: boolean };
   expiryDate: string | null; today: string; renewalExpiryDate?: string | null;
 }
-const ALL: SubscriptionStatus[] = ['DRAFT', 'QUOTATION', 'CONFIRMED', 'ACTIVE', 'PAUSED', 'CLOSED'];
-const FORWARD: Partial<Record<SubscriptionStatus, SubscriptionStatus>> = { DRAFT: 'QUOTATION', QUOTATION: 'CONFIRMED', CONFIRMED: 'ACTIVE' };
-const no = (reason: string): TransitionCheck => ({ ok: false, reason });
-const ok: TransitionCheck = { ok: true };
-
-export function canTransition(from: SubscriptionStatus, to: SubscriptionStatus, ctx: SubscriptionContext, opts: { requireRenewalDate?: boolean } = { requireRenewalDate: true }): TransitionCheck {
-  if (from === to) return no(`Subscription is already ${from}`);
-  if (FORWARD[from] === to) return ok;
-  if (to === 'CLOSED') {
-    if (from === 'DRAFT' || from === 'QUOTATION' || from === 'CONFIRMED') return ok;
-    if (from === 'ACTIVE' || from === 'PAUSED') {
-      const expired = ctx.expiryDate !== null && ctx.expiryDate < ctx.today;
-      return expired || ctx.plan.closableEarly ? ok : no('This plan does not allow closing before the expiry date');
-    }
+export function canTransition(from: SubscriptionStatus, to: SubscriptionStatus, context: SubscriptionContext, options: { requireRenewalDate?: boolean } = { requireRenewalDate: true }): TransitionCheck {
+  if (options.requireRenewalDate === false && from === 'CLOSED' && to === 'ACTIVE') return context.plan.renewable ? { ok: true } : { ok: false, reason: 'This plan cannot be renewed' };
+  const ctx = { ...context, renewalExpiryDate: context.renewalExpiryDate ?? undefined };
+  if (domainCanTransition('subscription',from,to,ctx)) return { ok:true };
+  let reason = `Cannot move a subscription from ${from} to ${to}`;
+  if (from === to) reason = `Subscription is already ${from}`;
+  else if (from === 'CLOSED' && to === 'ACTIVE') {
+    if (!context.plan.renewable) reason = 'This plan cannot be renewed';
+    else if (!context.renewalExpiryDate) reason = 'renewalExpiryDate is required to renew';
+    else reason = 'renewalExpiryDate must be later than today and the previous expiry date';
   }
-  if (from === 'ACTIVE' && to === 'PAUSED') return ctx.plan.pausable ? ok : no('This plan cannot be paused');
-  if (from === 'PAUSED' && to === 'ACTIVE') {
-    if (!ctx.plan.pausable) return no('This plan cannot be paused or resumed');
-    return ctx.expiryDate === null || ctx.expiryDate >= ctx.today ? ok : no('The subscription has expired; renew it instead of resuming');
-  }
-  if (from === 'CLOSED' && to === 'ACTIVE') {
-    if (!ctx.plan.renewable) return no('This plan cannot be renewed');
-    if (opts.requireRenewalDate === false) return ok;
-    const next = ctx.renewalExpiryDate;
-    if (!next) return no('renewalExpiryDate is required to renew');
-    if (next <= ctx.today || (ctx.expiryDate !== null && next <= ctx.expiryDate)) return no('renewalExpiryDate must be later than today and the previous expiry date');
-    return ok;
-  }
-  return no(`Cannot move a subscription from ${from} to ${to}`);
+  return { ok:false, reason };
 }
-
-/** Statuses the UI may offer. Renewal is listed when the plan allows it; the UI then asks for renewalExpiryDate. */
-export function allowedTransitions(from: SubscriptionStatus, ctx: SubscriptionContext): SubscriptionStatus[] {
-  return ALL.filter(to => canTransition(from, to, ctx, { requireRenewalDate: false }).ok);
+export function allowedTransitions(from: SubscriptionStatus, context: SubscriptionContext): SubscriptionStatus[] {
+  if (from === 'CLOSED' && context.plan.renewable) return ['ACTIVE']; // offer the renewal form; mutation still validates its date
+  return allowedSubscriptionTransitions(from,{...context,renewalExpiryDate:context.renewalExpiryDate ?? undefined});
 }
-
-// Moving forward requires re-validating lines, customer and plan availability.
-export const needsRevalidation = (from: SubscriptionStatus, to: SubscriptionStatus) => FORWARD[from] === to;
+export const needsRevalidation = (from: SubscriptionStatus, to: SubscriptionStatus) =>
+  ({ DRAFT:'QUOTATION',QUOTATION:'CONFIRMED',CONFIRMED:'ACTIVE' } as Partial<Record<SubscriptionStatus,SubscriptionStatus>>)[from] === to;

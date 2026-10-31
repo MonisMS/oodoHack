@@ -2,6 +2,7 @@ import type { InvoiceStatus, Prisma } from '@prisma/client';
 import type { z } from 'zod';
 import { db } from '../../lib/db.js';
 import { AppError } from '../../lib/errors.js';
+import type { FrozenTax } from '../../lib/domain/invoice-draft.js';
 import { dateOnly, parseDate, todayUtc } from '../../lib/dates.js';
 import { lockRow } from '../../lib/locks.js';
 import type { Principal } from '../../middleware/auth.js';
@@ -37,7 +38,7 @@ export function toInvoiceDto(i: InvoiceWithRelations, today = todayUtc()) {
     currency: i.currency as 'INR', sentAt: i.sentAt ? i.sentAt.toISOString() : null,
     lines: i.lines.map(l => ({
       id: l.id, invoiceId: l.invoiceId, kind: l.kind, productId: l.productId, variantId: l.variantId, discountId: l.discountId, description: l.description, quantity: l.quantity,
-      unitPrice: l.unitPrice.toFixed(2), subtotal: l.subtotal.toFixed(2), taxTotal: l.taxTotal.toFixed(2), total: l.total.toFixed(2), taxes: l.taxes as unknown as Array<{ taxId: string; name: string; percentage: string; amount: string }>, position: l.position,
+      unitPrice: l.unitPrice.toFixed(2), subtotal: l.subtotal.toFixed(2), taxTotal: l.taxTotal.toFixed(2), total: l.total.toFixed(2), taxes: l.taxes as unknown as Array<Pick<FrozenTax,'taxId'|'name'|'percentage'|'amount'> & Partial<Pick<FrozenTax,'taxableBase'|'grossBase'|'discountAmount'|'discounts'>>>, position: l.position,
     })),
     payments: i.payments.map(toPaymentDto),
     discountUsages: i.discountUsages.map(u => ({ id: u.id, discountId: u.discountId, invoiceId: u.invoiceId, amount: u.amount.toFixed(2), createdAt: u.createdAt.toISOString() })),

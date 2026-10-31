@@ -4,7 +4,7 @@ Foundation for a four-person hackathon team. React + Vite + TypeScript + Tailwin
 
 ## What works now
 
-Complete Prisma schema + generated initial SQL migration, every API route/validator/role contract, development identity adapter, error middleware, transactional numbering helper, responsive sidebar/role-nav, typed fetch client, route registry and feature page scaffolds. `/api/health` works without a database. Feature endpoints return 501 after role and input validation. Authentication, billing, catalog CRUD, payments, reporting, email and seed data remain the assigned workstreams. No fake data or partially working business features are presented as complete.
+Complete Prisma schema and migrations, API validators/role contracts, Better Auth sessions/users, quotation templates, subscriptions, invoices/payments, transactional numbering, shared frontend shell and typed client contracts. B's domain and billing engine are implemented; POST /api/billing/run executes transactional billing and subscription transitions use the financial schedule planner. The merged backend passes 150 tests, including real database races and a complete subscription/billing/payment flow. See [docs/B_IMPLEMENTATION.md](docs/B_IMPLEMENTATION.md) for financial behavior and verification. Catalog/reporting/portal handlers and feature screens remain assigned to their workstreams; some handlers still return 501. Completing B does not complete the whole application.
 
 Read [API_CONTRACT.md](API_CONTRACT.md) and [TASKS.md](TASKS.md) before implementing. Their business decisions are deliberate shared contracts. The rebalanced ownership table in TASKS.md (mirrored in docs/TEAM_PLAN.md) is authoritative. All four members have Codex: Lead/A 35%, Monis/B 30%, Adit Chobe/C 18%, Ansh/D 17%. A/B retain critical backend decisions; C/D own substantial specified implementation work.
 
@@ -44,7 +44,7 @@ npm run dev
 
 Web: http://localhost:5173. API health: http://localhost:4000/api/health. Vite proxies `/api` to Express; production needs an equivalent same-origin reverse proxy. Seed is intentionally a no-write stub until D implements it, so no demo logins exist yet. Migrations do not run automatically at startup. For an already-provisioned database without shadow permissions use `npm run db:deploy` to apply committed migrations. Never use reset/push against a teammate's database.
 
-`server/.env` is loaded relative to the server workspace by dotenv; npm workspace scripts set that directory. Frontend env values are public: never put BETTER_AUTH_SECRET, SMTP credentials or DATABASE_URL in client env. API environment variables are listed in root .env.example. Client `.env.example` provides VITE_API_BASE_URL and explicit development-auth flag. Auth is Better Auth with an httpOnly session cookie (same-origin via the Vite proxy); A owns the server session, role and active-user checks and `client/src/lib/session.tsx`; C owns the public auth forms and calls `useSession()` (signIn/signUp/signOut/requestReset/resetPassword). Development headers are a temporary opt-in and are rejected if NODE_ENV=production. Keep the API on a trusted local machine until A finishes real auth. The shell's dev identity UUID is only an identity fixture, not a seeded DB user; replace/select a real seed user for business operations.
+`server/.env` is loaded relative to the server workspace by dotenv; npm workspace scripts set that directory. Frontend env values are public: never put BETTER_AUTH_SECRET, SMTP credentials or DATABASE_URL in client env. API environment variables are listed in root .env.example. Client `.env.example` provides VITE_API_BASE_URL and explicit development-auth flag. Auth is Better Auth with an httpOnly session cookie (same-origin via the Vite proxy); A owns the server session, role and active-user checks and `client/src/lib/session.tsx`; C owns the public auth forms and calls `useSession()` (signIn/signUp/signOut/requestReset/resetPassword). Development headers are a temporary opt-in and are rejected if NODE_ENV=production. Production auth settings are listed below. The shell's dev identity UUID is only an identity fixture, not a seeded DB user; replace/select a real seed user for business operations.
 
 ## Commands
 
@@ -52,7 +52,7 @@ Web: http://localhost:5173. API health: http://localhost:4000/api/health. Vite p
 |---|---|
 | npm run dev | Express+Vite watch processes |
 | npm run typecheck | Both workspaces, including foundation tests/seed |
-| npm test | Foundation API/input boundary tests (no PostgreSQL needed) |
+| npm test | Unit/API/job checks; DB suites require TEST_DATABASE_URL, BILLING_TEST_DATABASE_URL and BILLING_FLOW_TEST_DATABASE_URL (see B handoff) |
 | npm run build | Server TS emit + browser production bundle |
 | npm run db:generate | Prisma client generation |
 | npm run db:migrate | Apply committed migrations; create dev migrations only as A |
@@ -68,7 +68,7 @@ React feature pages → typed fetch + TanStack Query → /api/<module>
 Express registry → requireAuth/requireRole → Zod validate → controller → service
                                                            ↓
                                                     shared Prisma → local PostgreSQL
-Cron (B, pending) ─────────────────────────────────→ billing service transaction
+Cron (B) ─────────────────────────────────→ billing service transaction
 ```
 
 - Server modules: `server/src/modules/<module>/{routes.ts,controller.ts,service.ts,schemas.ts}`. Controllers read parsed data from `res.locals.validated`, not raw request values. Central validators in `server/src/lib/contracts.ts` are frozen and re-exported by module schemas. Owners may extend module files with noncontract helpers; changing input shapes requires A.
@@ -104,7 +104,7 @@ After foundation-v1, only A edits schema.prisma or API_CONTRACT.md, consulting B
 
 Checkpoints 11:30, 13:30, 15:30 IST: pull main, migrate, seed, run typecheck/tests/build and demo smoke test. Feature freeze 16:15; bug fixes only until 16:45; record video at 16:45; code freeze 17:00, video submission 17:30. These are planning times, shifted together if kickoff/deadline changes. A has a 40-minute pre-freeze reserve; B must hand off by 12:15 before leaving at 12:30; C/D have 45/50-minute reserves. The full-day MUST budgets fit the planning window in TASKS.md. Test only against disposable/local data, especially later concurrency and performance tests.
 
-Billing is disabled until B implements transactions and node-cron and A integrates the shared startup wiring. Do not remove the explicit scheduler startup refusal until real job wiring exists. Email delivery is implemented by feature owners later; development fallback logs may include reset links, so never use them in production. Tasks, dependencies, acceptance priorities and cut list are in TASKS.md.
+Billing is implemented and wired into shared startup. Its scheduler is opt-in via BILLING_CRON_ENABLED=true, with a daily UTC default; leave it false until the intended local database has migrations applied. The real billing endpoint is available to ADMIN/STAFF regardless of the cron flag. The subscription service uses B's transition planner for pause/renew mutations; see the handoff. Email delivery is implemented by feature owners later; development fallback logs may include reset links, so never use them in production. Tasks, dependencies, acceptance priorities and cut list are in TASKS.md.
 
 ## Production notes (verified 2026-10-31 on a fresh database)
 
@@ -118,7 +118,6 @@ Steps: `npm ci`, set the environment below, `npm run db:deploy` (applies committ
 | `BETTER_AUTH_URL` | the public **https** URL of the API (this makes the session cookie `Secure`) |
 | `CLIENT_ORIGIN` | the exact browser origin of the web app; this is the only origin allowed to make credentialed or state-changing calls |
 | `DEV_AUTH_ENABLED` | must be `false` (the server refuses to start otherwise; `x-dev-*` headers are rejected) |
-| `BILLING_CRON_ENABLED` | stays `false` until B's billing scheduler is wired |
+| `BILLING_CRON_ENABLED` | opt in with `true` after migrations; the UTC scheduler is wired and defaults to off |
 
 Security behaviour worth knowing: the browser session is an httpOnly, SameSite=Lax cookie; every state-changing request (including `/api/auth/*`) from a foreign `Origin` is refused with 403 (CSRF/login-CSRF defence, `middleware/origin-guard.ts`); Better Auth rate-limits sign-in, sign-up and password reset per IP using in-process memory (use a shared store before running several API instances); helmet headers are on. Serve the web app and `/api` from the same origin (reverse proxy), as the Vite dev proxy does. Over plain http the session cookie is not `Secure`, so use https for any real deployment. Run `TEST_DATABASE_URL=... npm test -w server` against a disposable local database to execute the integration and security suites (they are skipped without it).
-

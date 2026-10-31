@@ -1,3 +1,4 @@
+import { DomainError } from './domain/errors.js';
 import type { ErrorRequestHandler } from 'express';
 import { Prisma } from '@prisma/client';
 import { ZodError } from 'zod';
@@ -9,6 +10,10 @@ export const errorHandler: ErrorRequestHandler = (error: unknown, _req, res, _ne
     const fields: Record<string, string[]> = {};
     for (const issue of error.issues) (fields[issue.path.join('.') || '_form'] ??= []).push(issue.message);
     res.status(422).json({ error: { code: 'VALIDATION_ERROR', message: 'Check the submitted fields', fields } }); return;
+  }
+  if (error instanceof DomainError) {
+    const status = ['INVALID_TRANSITION','BILLING_BACKLOG','SCHEDULE_RECONCILIATION_REQUIRED','DISCOUNT_RESERVATION_CONFLICT'].includes(error.code) ? 409 : 422;
+    res.status(status).json({ error: { code: error.code, message: error.message } }); return;
   }
   if (error instanceof AppError) { res.status(error.status).json({ error: { code: error.code, message: error.message, ...(error.fields ? { fields: error.fields } : {}) } }); return; }
   if (error instanceof Prisma.PrismaClientKnownRequestError) {

@@ -26,6 +26,15 @@ describe.skipIf(!TEST_DB)('templates and subscriptions (A-03)', () => {
   const createSub = async (over: Record<string, unknown> = {}) => { const r = await staff.post('/api/subscriptions').send(body(over)); expect(r.status, JSON.stringify(r.body)).toBe(201); return r.body.data as { id: string; number: string; status: string };  };
   const move = (id: string, to: string, extra: Record<string, unknown> = {}) => staff.post(`/api/subscriptions/${id}/transition`).send({ to, ...extra });
   const activate = async (id: string) => { for (const to of ['QUOTATION', 'CONFIRMED', 'ACTIVE']) expect((await move(id, to)).status).toBe(200); };
+  // Test setup settles actual active service before exercising pause/close policy.
+  // Other suites share this DB, so run only this fixture subscription.
+  const settle = async (id: string, asOfDate = iso(0)) => {
+    const { createBillingService } = await import('../../src/modules/billing-engine/service.js');
+    const others = await db.subscription.findMany({ where: { id: { not: id } }, select: { id:true } });
+    const result = await createBillingService(db).runBilling({ asOfDate, maxPeriodsPerSubscription:120 },{ excludeSubscriptionIds:others.map(row=>row.id) });
+    expect(result.failures).toEqual([]);
+  };
+
 
   beforeAll(async () => {
     process.env.DATABASE_URL = TEST_DB; process.env.NODE_ENV = 'test'; process.env.DEV_AUTH_ENABLED = 'false';
@@ -184,6 +193,8 @@ describe.skipIf(!TEST_DB)('templates and subscriptions (A-03)', () => {
       const fixed = await createSub(); await activate(fixed.id);
       expect((await move(fixed.id, 'PAUSED')).body.error.code).toBe('INVALID_TRANSITION');
       const flex = await createSub({ planId: flexPlan.id, lines: [{ productId: product.id, quantity: 1 }] }); await activate(flex.id);
+      expect((await move(flex.id, 'PAUSED')).body.error.code).toBe('BILLING_BACKLOG');
+      await settle(flex.id);
       expect((await move(flex.id, 'PAUSED')).body.data.status).toBe('PAUSED');
       expect((await move(flex.id, 'ACTIVE')).body.data.status).toBe('ACTIVE');
     });
@@ -192,22 +203,24 @@ describe.skipIf(!TEST_DB)('templates and subscriptions (A-03)', () => {
       const locked = await createSub(); await activate(locked.id);
       expect((await move(locked.id, 'CLOSED')).body.error.code).toBe('INVALID_TRANSITION');
       const early = await createSub({ planId: flexPlan.id, lines: [{ productId: product.id, quantity: 1 }] }); await activate(early.id);
+      await settle(early.id);
       expect((await move(early.id, 'CLOSED')).body.data.status).toBe('CLOSED');
       const expired = await createSub({ startDate: '2020-01-01', expiryDate: '2020-12-31' }); await activate(expired.id);
+      await settle(expired.id,'2020-12-31');
       expect((await move(expired.id, 'CLOSED', { reason: 'expired' })).body.data.status).toBe('CLOSED');
     });
 
-    it('renews a closed subscription only if renewable, with a valid renewalExpiryDate, keeping the invoice schedule', async () => {
+    it('renews a closed subscription only if renewable, with a valid renewalExpiryDate, starting a fresh schedule without back-billing closed gaps', async () => {
       const s = await createSub({ planId: flexPlan.id, startDate: '2020-01-01', expiryDate: '2020-12-31', lines: [{ productId: product.id, quantity: 1 }] });
-      await activate(s.id); expect((await move(s.id, 'PAUSED')).status).toBe(200);
+      await activate(s.id); await settle(s.id,'2020-12-31'); expect((await move(s.id, 'PAUSED')).status).toBe(200);
       expect((await move(s.id, 'ACTIVE')).body.error.code).toBe('INVALID_TRANSITION'); // expired: renew, don't resume
       expect((await move(s.id, 'CLOSED')).status).toBe(200);
       expect((await move(s.id, 'ACTIVE')).body.error.message).toMatch(/renewalExpiryDate is required/);
       expect((await move(s.id, 'ACTIVE', { renewalExpiryDate: '2021-01-01' })).status).toBe(409); // not later than today
       const renewed = await move(s.id, 'ACTIVE', { renewalExpiryDate: iso(365) });
       expect(renewed.status, JSON.stringify(renewed.body)).toBe(200);
-      expect(renewed.body.data).toMatchObject({ status: 'ACTIVE', expiryDate: iso(365), nextInvoiceDate: '2020-01-01' }); // schedule preserved
-      const fixed = await createSub({ startDate: '2020-01-01', expiryDate: '2020-12-31' }); await activate(fixed.id); await move(fixed.id, 'CLOSED');
+      expect(renewed.body.data).toMatchObject({ status: 'ACTIVE', expiryDate: iso(365), nextInvoiceDate: iso(0) }); // closed gaps are waived; anchors restart today
+      const fixed = await createSub({ startDate: '2020-01-01', expiryDate: '2020-12-31' }); await activate(fixed.id); await settle(fixed.id,'2020-12-31'); await move(fixed.id, 'CLOSED');
       expect((await move(fixed.id, 'ACTIVE', { renewalExpiryDate: iso(365) })).body.error.message).toMatch(/cannot be renewed/);
     });
 

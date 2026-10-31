@@ -1,4 +1,18 @@
-import type { RequestHandler } from 'express';
-import { AppError } from '../../lib/errors.js';
-// Owner A: replace with controllers using res.locals.validated.
-export const controller: RequestHandler = (_req, _res, next) => next(new AppError(501, 'NOT_IMPLEMENTED', 'billing-engine is awaiting its assigned workstream'));
+import type { RequestHandler } from "express";
+import { runBilling } from "./service.js";
+import { DomainError } from "../../lib/domain/errors.js";
+import { AppError } from "../../lib/errors.js";
+
+export const controller: RequestHandler = async (_req, res, next) => {
+  try {
+    res.json({ data: await runBilling(res.locals.validated.body) });
+  } catch (error) {
+    if (error instanceof DomainError && error.code === "INVALID_DATE")
+      return next(
+        new AppError(422, "VALIDATION_ERROR", error.message, {
+          asOfDate: [error.message],
+        }),
+      );
+    next(error);
+  }
+};

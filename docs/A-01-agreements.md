@@ -38,51 +38,19 @@ Rules for the seed (D-07):
 - Create the catalog rows with the ids above so cross-module tests share the same data.
 - Seed must be idempotent (skip rows that exist) and must refuse to run when `NODE_ENV=production`. Never truncate.
 
-## 3. Pure domain signatures — PROPOSED (for B to confirm)
+## 3. Pure domain signatures — INTEGRATED
 
-Location `server/src/lib/domain/*`, no Prisma, integer paise (safe integers), dates as `YYYY-MM-DD` strings (`DateOnly`). Where the contract already freezes a signature it is marked **frozen**.
+B's implemented interfaces are in `server/src/lib/domain/index.ts` and documented in `docs/B_IMPLEMENTATION.md`. The earlier proposed signatures are superseded by those actual typed exports; no consumer should copy the old proposed draft shape.
 
-```ts
-// money.ts
-toMinor(amount: string): number                       // "1234.50" -> 123450; throws on malformed input
-fromMinor(minor: number): string                      // 123450 -> "1234.50"
-lineAmountMinor(quantity: number, unitPriceMinor: number): number
-effectiveUnitPriceMinor(productPriceMinor: number, variantExtraMinor?: number | null): number   // variant added exactly once
-computeLineTax(baseMinor: number, percentage: string): number                                   // frozen; round-half-up
+- Frozen computeLineTax and findApplicableDiscounts signatures remain supported.
+- Money/price: toMinor, fromMinor, lineSubtotal, resolveUnitPrice, priceLine.
+- Calendar: nextBillingDate(current, period, anchor), billingPeriods(input), anchorFor.
+- Draft: buildInvoiceDraft({ periodStart, charges, discounts }) returns decimal-string money, charge/discount lines, frozen tax allocations and rule usages.
+- B's state functions take an entity kind and return booleans/lists. A's subscriptions/rules.ts retains its `{ok,reason}`/UI-action interface as a thin compatibility adapter to B, not a second transition policy.
+- The subscription transition service calls planSubscriptionTransition under its existing row lock and writes schedule/status/history atomically. User-approved gaps are uncharged, issued coverage is protected, and active unbilled backlog returns 409.
+- Invoice administration uses B's public canTransitionInvoice adapter; payment persistence/locking stays in A's service.
 
-// period.ts   (anchor = subscription start / first invoice date; periods are [start, end))
-nextInvoiceDate(anchor: DateOnly, period: BillingPeriod, periodsElapsed: number): DateOnly       // always from the ORIGINAL anchor
-listDuePeriods(input: { anchor: DateOnly; nextInvoiceDate: DateOnly; asOfDate: DateOnly; expiryDate: DateOnly | null;
-                        period: BillingPeriod; max: number }): { periods: Array<{ start: DateOnly; end: DateOnly }>; hasMore: boolean }
-                                                                                                 // expiry inclusive; last end clipped to expiry+1
-
-// discount.ts
-findApplicableDiscounts(discounts: Discount[], context: { periodStart: DateOnly; productId: Id | null; quantity: number; subtotalMinor: number }): Discount[]   // frozen
-
-// states.ts
-type TransitionCheck = { ok: true } | { ok: false; reason: string }                              // reason becomes the 409 message
-interface SubscriptionContext { plan: { pausable: boolean; closableEarly: boolean; renewable: boolean };
-                                expiryDate: DateOnly | null; today: DateOnly; renewalExpiryDate?: DateOnly | null }
-canTransition(from: SubscriptionStatus, to: SubscriptionStatus, ctx: SubscriptionContext): TransitionCheck
-allowedTransitions(from: SubscriptionStatus, ctx: SubscriptionContext): SubscriptionStatus[]
-canTransitionInvoice(from: InvoiceStatus, to: InvoiceStatus, ctx: { paymentCount: number }): TransitionCheck
-
-// invoice-draft.ts
-buildInvoiceDraft(input: { periodStart: DateOnly; periodEnd: DateOnly; lines: Array<{ productId: Id | null; description: string; quantity: number; unitPriceMinor: number; taxes: Array<{ taxId: Id; name: string; percentage: string }> }>;
-                           planFee: { name: string; priceMinor: number; taxes: [...] } | null; discounts: Discount[] }): InvoiceDraft
-// InvoiceDraft = { lines: [...charge lines with tax snapshots + negative discount lines], subtotalMinor, discountTotalMinor, taxTotalMinor, totalMinor, appliedDiscountIds: Id[] }
-```
-
-Who calls what:
-- **A (A-03)** uses `effectiveUnitPriceMinor`, `lineAmountMinor`, `canTransition`, `allowedTransitions` when creating subscriptions and transitioning them; persists status + `SubscriptionEvent`.
-- **A (A-04)** uses `canTransitionInvoice`; keeps payment/lock logic in `payments` service.
-- **B** owns `listDuePeriods`, `buildInvoiceDraft` and the billing transaction; A only imports them for previews if needed.
-
-### Questions for Monis (answer in `docs/status/B.md` or by editing section 3)
-1. Are the names/shapes above acceptable? Any deviation → edit this file in the same PR as the code.
-2. `canTransition` returns `{ok,reason}` (not a boolean) so A can return a precise 409; OK?
-3. Renewal: `ctx.renewalExpiryDate` is required and must be later than the old expiry and `today` (contract table) — enforced in `canTransition`?
-4. Can `docs/status/B.md` list the pure helpers already pushed, so A-03 can import real code instead of stubs? Target: money + states first (A-03 needs them), period + draft later.
+The user approved discounts before tax, a per-invoice fixed-discount budget, and uncharged paused/closed gaps. These replace the original proposed rebate/preserved-cursor assumptions; API_CONTRACT.md records the behavior.
 
 ## 4. Contract corrections made in this task
 

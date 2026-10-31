@@ -4,6 +4,7 @@ import { db } from '../../lib/db.js';
 import { AppError } from '../../lib/errors.js';
 import { lockRow } from '../../lib/locks.js';
 import { nextNumber } from '../../lib/numbers.js';
+import { planSubscriptionTransition } from '../../lib/domain/states.js';
 import { addDays, assertCustomer, assertPlanSelectable, dateOnly, parseDate, resolveLines, todayUtc, totalQuantity, type LineIn, type Tx } from '../../lib/catalog-lines.js';
 import type { Principal } from '../../middleware/auth.js';
 import { allowedTransitions, canTransition, needsRevalidation } from './rules.js';
@@ -142,9 +143,14 @@ export async function transition(id: string, input: TransitionInput, actor: Prin
       await assertCustomer(tx, sub.customerId);
       assertPlanSelectable(sub.plan, dateOnly(sub.startDate), totalQuantity(sub.lines));
     }
-    // Renewal extends the schedule: the new expiry is stored, nextInvoiceDate/anchor are deliberately kept.
-    const renewal = from === 'CLOSED' && input.to === 'ACTIVE' && input.renewalExpiryDate ? { expiryDate: parseDate(input.renewalExpiryDate) } : {};
-    await tx.subscription.update({ where: { id }, data: { status: input.to, ...renewal } });
+    const coverage = await tx.invoice.aggregate({ where: { subscriptionId: id }, _max: { periodEnd: true } });
+    const change = planSubscriptionTransition(from,input.to,{
+      plan:sub.plan,expiryDate,today:todayUtc(),renewalExpiryDate:input.renewalExpiryDate,
+      nextInvoiceDate:dateOnly(sub.nextInvoiceDate),billingAnchorDay:sub.billingAnchorDay,billingAnchorMonth:sub.billingAnchorMonth,
+      lastInvoicePeriodEnd:coverage._max.periodEnd ? dateOnly(coverage._max.periodEnd) : null,
+    });
+    // The planner preserves issued coverage, blocks discarded active debt and waives paused/closed gaps.
+    await tx.subscription.update({ where:{id},data:{status:change.status,nextInvoiceDate:parseDate(change.nextInvoiceDate),billingAnchorDay:change.billingAnchorDay,billingAnchorMonth:change.billingAnchorMonth,expiryDate:change.expiryDate ? parseDate(change.expiryDate) : null} });
     await tx.subscriptionEvent.create({ data: { subscriptionId: id, fromStatus: from, toStatus: input.to, actorId: actor.id, reason: input.reason ?? null } });
   });
   return get(id, actor);
