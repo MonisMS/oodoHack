@@ -1,10 +1,31 @@
+import { Alert } from "./primitives/alert";
+import { Skeleton } from "./primitives/skeleton";
+import { Button as LibraryButton } from "./primitives/button";
+import { Badge } from "./primitives/badge";
+import { Input as LibraryInput } from "./primitives/input";
+import { Textarea as LibraryTextarea } from "./primitives/textarea";
+import { NativeSelect } from "./primitives/native-select";
+import { Label } from "./primitives/label";
+import { Switch } from "./primitives/switch";
+import {
+  Dialog,
+  DialogContent,
+  DialogHeader,
+  DialogTitle,
+} from "./primitives/dialog";
+import {
+  Table,
+  TableHeader,
+  TableBody,
+  TableRow,
+  TableHead,
+  TableCell,
+} from "./primitives/table";
+import { Toaster, toast } from "sonner";
 import {
   createContext,
   useContext,
-  useEffect,
   useId,
-  useRef,
-  useState,
   type ReactNode,
   type ButtonHTMLAttributes,
   type FormEvent,
@@ -20,12 +41,20 @@ export function Button({
   variant?: "primary" | "secondary" | "ghost" | "danger";
 }) {
   return (
-    <button
+    <LibraryButton
+      variant={
+        {
+          primary: "default",
+          secondary: "outline",
+          ghost: "ghost",
+          danger: "destructive",
+        }[variant] as "default" | "outline" | "ghost" | "destructive"
+      }
       {...props}
       className={`btn btn-${variant} ${props.className ?? ""}`}
     >
       {children}
-    </button>
+    </LibraryButton>
   );
 }
 export function StatusBadge({ status }: { status: string | boolean }) {
@@ -39,10 +68,10 @@ export function StatusBadge({ status }: { status: string | boolean }) {
         ? "neutral"
         : "info";
   return (
-    <span className={`badge badge-${tone}`}>
+    <Badge variant="outline" className={`badge badge-${tone}`}>
       <span />
       {value.replaceAll("_", " ").toLowerCase()}
-    </span>
+    </Badge>
   );
 }
 export function FormField({
@@ -63,10 +92,10 @@ export function FormField({
   const describedBy = invalid ? `${id}-error` : hint ? `${id}-hint` : undefined;
   return (
     <div className={`field ${invalid ? "field-invalid" : ""}`}>
-      <label htmlFor={id}>
+      <Label htmlFor={id}>
         {label}
         {required && <span className="required-mark"> *</span>}
-      </label>
+      </Label>
       <div className="field-control">
         <FieldContext.Provider value={{ id, invalid, describedBy }}>
           {children}
@@ -94,7 +123,7 @@ export const useField = () => useContext(FieldContext);
 export function Input(props: React.InputHTMLAttributes<HTMLInputElement>) {
   const field = useField();
   return (
-    <input
+    <LibraryInput
       aria-invalid={field.invalid || undefined}
       aria-describedby={field.describedBy}
       {...props}
@@ -106,7 +135,7 @@ export function Input(props: React.InputHTMLAttributes<HTMLInputElement>) {
 export function Select(props: React.SelectHTMLAttributes<HTMLSelectElement>) {
   const field = useField();
   return (
-    <select
+    <NativeSelect
       aria-invalid={field.invalid || undefined}
       aria-describedby={field.describedBy}
       {...props}
@@ -120,7 +149,7 @@ export function Textarea(
 ) {
   const field = useField();
   return (
-    <textarea
+    <LibraryTextarea
       aria-invalid={field.invalid || undefined}
       aria-describedby={field.describedBy}
       {...props}
@@ -146,12 +175,7 @@ export function Toggle({
         <strong>{label}</strong>
         {hint && <small>{hint}</small>}
       </span>
-      <input
-        type="checkbox"
-        className="switch"
-        checked={checked}
-        onChange={(e) => onChange(e.target.checked)}
-      />
+      <Switch aria-label={label} checked={checked} onCheckedChange={onChange} />
     </label>
   );
 }
@@ -164,7 +188,7 @@ export function ErrorNotice({
 }) {
   if (!error) return null;
   return (
-    <div className="notice notice-error" role="alert">
+    <Alert variant="destructive" className="notice notice-error">
       <Icon name="info" />
       <div>
         <strong>
@@ -185,7 +209,7 @@ export function ErrorNotice({
           Try again
         </Button>
       )}
-    </div>
+    </Alert>
   );
 }
 export function Loading({
@@ -195,7 +219,7 @@ export function Loading({
 }) {
   return (
     <div className="loading-state" role="status">
-      <span className="spinner" />
+      <Skeleton className="h-4 w-4 rounded-full" />
       {label}
     </div>
   );
@@ -231,35 +255,35 @@ export function DataTable<T>({
     );
   return (
     <div className="table-scroll">
-      <table className="data-table">
-        <thead>
-          <tr>
+      <Table className="data-table">
+        <TableHeader>
+          <TableRow>
             {columns.map((c) => (
-              <th
+              <TableHead
                 scope="col"
                 key={c.key}
                 className={c.align === "right" ? "align-right" : ""}
               >
                 {c.header}
-              </th>
+              </TableHead>
             ))}
-          </tr>
-        </thead>
-        <tbody>
+          </TableRow>
+        </TableHeader>
+        <TableBody>
           {rows.map((row) => (
-            <tr key={rowKey(row)}>
+            <TableRow key={rowKey(row)}>
               {columns.map((c) => (
-                <td
+                <TableCell
                   key={c.key}
                   className={c.align === "right" ? "align-right" : ""}
                 >
                   {c.render(row)}
-                </td>
+                </TableCell>
               ))}
-            </tr>
+            </TableRow>
           ))}
-        </tbody>
-      </table>
+        </TableBody>
+      </Table>
     </div>
   );
 }
@@ -317,33 +341,23 @@ export function Modal({
   onClose: () => void;
   wide?: boolean;
 }) {
-  const dialog = useRef<HTMLDialogElement>(null);
-  const heading = useId();
-  useEffect(() => {
-    if (open && !dialog.current?.open) dialog.current?.showModal();
-    if (!open && dialog.current?.open) dialog.current?.close();
-  }, [open]);
   return (
-    <dialog
-      ref={dialog}
-      className={`modal ${wide ? "modal-wide" : ""}`}
-      onCancel={(e) => {
-        e.preventDefault();
-        onClose();
+    <Dialog
+      open={open}
+      onOpenChange={(value) => {
+        if (!value) onClose();
       }}
-      onClick={(e) => {
-        if (e.target === dialog.current) onClose();
-      }}
-      aria-labelledby={heading}
     >
-      <div className="modal-header">
-        <h2 id={heading}>{title}</h2>
-        <Button variant="ghost" aria-label="Close dialog" onClick={onClose}>
-          <Icon name="close" />
-        </Button>
-      </div>
-      {open && children}
-    </dialog>
+      <DialogContent
+        aria-describedby={undefined}
+        className={`workspace-dialog ${wide ? "workspace-dialog-wide" : ""}`}
+      >
+        <DialogHeader className="modal-header">
+          <DialogTitle>{title}</DialogTitle>
+        </DialogHeader>
+        {children}
+      </DialogContent>
+    </Dialog>
   );
 }
 export function ConfirmDialog({
@@ -391,27 +405,21 @@ export function ConfirmDialog({
 type ToastValue = { notify: (message: string) => void };
 const ToastContext = createContext<ToastValue>({ notify: () => {} });
 export function ToastProvider({ children }: { children: ReactNode }) {
-  const [message, setMessage] = useState("");
-  useEffect(() => {
-    if (!message) return;
-    const timer = setTimeout(() => setMessage(""), 4500);
-    return () => clearTimeout(timer);
-  }, [message]);
   return (
-    <ToastContext.Provider value={{ notify: setMessage }}>
+    <ToastContext.Provider
+      value={{
+        notify: (message) => {
+          toast.success(message);
+        },
+      }}
+    >
       {children}
-      {message && (
-        <div className="toast" role="status">
-          <Icon name="check" />
-          {message}
-          <button
-            aria-label="Dismiss notification"
-            onClick={() => setMessage("")}
-          >
-            <Icon name="close" size={15} />
-          </button>
-        </div>
-      )}
+      <Toaster
+        position="bottom-right"
+        closeButton
+        richColors
+        toastOptions={{ className: "workspace-toast" }}
+      />
     </ToastContext.Provider>
   );
 }

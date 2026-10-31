@@ -1,3 +1,4 @@
+import { NativeSelect as LibraryNativeSelect } from "../ui/primitives/native-select";
 import { useEffect, useRef, useState } from "react";
 import {
   Link,
@@ -26,12 +27,13 @@ export function Brand() {
           <path d="M7 7a5 5 0 1 1 0 10H5V7h2Zm10 0a5 5 0 1 0 0 10h2V7h-2Z" />
         </svg>
       </span>
-      brightloop<span style={{ color: "#9aa78f", fontSize: 18 }}>.</span>
+      brightloop<span style={{ color: "#8c8e96", fontSize: 18 }}>.</span>
     </Link>
   );
 }
 const icons: Record<string, string> = {
   "/dashboard": "grid",
+  "/portal": "grid",
   "/subscriptions": "repeat",
   "/quotation-templates": "file",
   "/invoices": "file",
@@ -49,7 +51,12 @@ const icons: Record<string, string> = {
 const groups = [
   {
     label: "Workspace",
-    paths: ["/dashboard", "/portal/subscriptions", "/portal/invoices"],
+    paths: [
+      "/portal",
+      "/dashboard",
+      "/portal/subscriptions",
+      "/portal/invoices",
+    ],
   },
   {
     label: "Revenue",
@@ -124,10 +131,12 @@ function Shell() {
     "/reset-password",
   ].includes(location.pathname);
   if (authPage) return <Outlet />;
-  const current = nav.find(
-    (n) =>
-      location.pathname === n.to || location.pathname.startsWith(n.to + "/"),
-  );
+  const current = [...nav]
+    .sort((a, b) => b.to.length - a.to.length)
+    .find(
+      (n) =>
+        location.pathname === n.to || location.pathname.startsWith(n.to + "/"),
+    );
   const group = groups.find((g) => current && g.paths.includes(current.to));
   const logout = async () => {
     setLeaving(true);
@@ -171,6 +180,7 @@ function Shell() {
                   <NavLink
                     key={n.to}
                     to={n.to}
+                    end={n.to === "/portal"}
                     onClick={() => setOpen(false)}
                     className={({ isActive }) =>
                       `nav-link ${isActive ? "active" : ""}`
@@ -187,7 +197,7 @@ function Shell() {
         {dev && (
           <label className="small muted" style={{ marginBottom: 16 }}>
             Development role
-            <select
+            <LibraryNativeSelect
               className="input"
               value={role ?? "ADMIN"}
               onChange={(e) => {
@@ -198,7 +208,7 @@ function Shell() {
               <option>ADMIN</option>
               <option>STAFF</option>
               <option>CUSTOMER</option>
-            </select>
+            </LibraryNativeSelect>
           </label>
         )}
         <div className="sidebar-footer">

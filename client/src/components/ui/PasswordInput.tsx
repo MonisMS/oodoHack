@@ -1,3 +1,4 @@
+import { Input as LibraryInput } from "./primitives/input";
 import { useState, useId } from "react";
 import { Icon } from "./Icon";
 export const passwordRules = [
@@ -30,7 +31,7 @@ export function PasswordInput({
     <div className={`field ${error?.length ? "field-invalid" : ""}`}>
       <label htmlFor={id}>{label}</label>
       <div className="password-wrap">
-        <input
+        <LibraryInput
           className="input"
           id={id}
           type={visible ? "text" : "password"}

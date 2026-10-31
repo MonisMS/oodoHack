@@ -1,3 +1,5 @@
+import { Input as LibraryInput } from "../ui/primitives/input";
+import { NativeSelect as LibraryNativeSelect } from "../ui/primitives/native-select";
 import { useState, type FormEvent } from "react";
 import { Link, useParams, useSearchParams } from "react-router-dom";
 import { useQuery, useMutation, useQueryClient } from "@tanstack/react-query";
@@ -222,7 +224,7 @@ function CatalogList({ kind }: { kind: Kind }) {
           <div className="toolbar-controls">
             <label className="search-field">
               <Icon name="search" size={14} />
-              <input
+              <LibraryInput
                 aria-label={`Search ${kind}`}
                 placeholder={`Search ${kind}…`}
                 value={search}
@@ -232,7 +234,7 @@ function CatalogList({ kind }: { kind: Kind }) {
                 }}
               />
             </label>
-            <select
+            <LibraryNativeSelect
               className="sort-select"
               aria-label={`Sort ${kind}`}
               value={sort}
@@ -241,7 +243,7 @@ function CatalogList({ kind }: { kind: Kind }) {
               <option value="newest">Newest first</option>
               <option value="oldest">Oldest first</option>
               <option value="name">Name, A–Z</option>
-            </select>
+            </LibraryNativeSelect>
           </div>
         </div>
         <div style={{ padding: result.error ? "0 20px" : 0 }}>

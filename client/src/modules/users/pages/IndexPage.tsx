@@ -1,3 +1,4 @@
+import { Input as LibraryInput } from "../../../components/ui/primitives/input";
 import { useState, type FormEvent } from "react";
 import { useLocation, Link, useSearchParams } from "react-router-dom";
 import { useQuery, useMutation, useQueryClient } from "@tanstack/react-query";
@@ -89,7 +90,7 @@ export default function IndexPage(_props: { title?: string }) {
           </div>
           <label className="search-field">
             <Icon name="search" size={14} />
-            <input
+            <LibraryInput
               aria-label={staff ? "Search staff" : "Search customers"}
               value={search}
               placeholder="Search by name or email…"

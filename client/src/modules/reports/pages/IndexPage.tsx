@@ -1,3 +1,7 @@
+import { NativeSelect as LibraryNativeSelect } from "../../../components/ui/primitives/native-select";
+import { BentoGrid } from "../../../components/ui/primitives/bento-grid";
+import { Card } from "../../../components/ui/primitives/card";
+import { NumberTicker } from "../../../components/ui/primitives/number-ticker";
 import { useState, type FormEvent } from "react";
 import { Link, useSearchParams } from "react-router-dom";
 import { useQuery } from "@tanstack/react-query";
@@ -146,7 +150,7 @@ export default function IndexPage(_props: { title?: string }) {
         description="A clear picture of your subscriptions and revenue."
         actions={
           <>
-            <select
+            <LibraryNativeSelect
               className="sort-select"
               aria-label="Date range"
               value={query.from || query.to ? "custom" : "all"}
@@ -156,7 +160,7 @@ export default function IndexPage(_props: { title?: string }) {
               <option value="month">This month</option>
               <option value="30days">Last 30 days</option>
               <option value="custom">Custom range</option>
-            </select>
+            </LibraryNativeSelect>
             <Button variant="secondary" onClick={() => setFiltersOpen(true)}>
               <Icon name="settings" size={14} />
               Filters
@@ -203,9 +207,9 @@ export default function IndexPage(_props: { title?: string }) {
       ) : (
         data && (
           <>
-            <div className="metric-grid">
+            <BentoGrid className="metric-grid">
               {metrics.map((m) => (
-                <section
+                <Card
                   className={`metric ${m.accent ? "metric-accent" : ""}`}
                   key={m.label}
                 >
@@ -213,16 +217,30 @@ export default function IndexPage(_props: { title?: string }) {
                     {m.label}
                     <Icon name={m.icon} size={14} />
                   </p>
-                  <p className="metric-value number">{m.value}</p>
+                  <p className="metric-value number">
+                    {m.icon === "repeat" ? (
+                      <>
+                        <span className="sr-only">{m.value}</span>
+                        <NumberTicker
+                          aria-hidden="true"
+                          value={data.activeSubscriptions}
+                        />
+                      </>
+                    ) : (
+                      m.value
+                    )}
+                  </p>
                   <p className="metric-foot">{m.note}</p>
-                </section>
+                </Card>
               ))}
-            </div>
-            <div className="dashboard-grid">
-              <section className="panel">
+            </BentoGrid>
+            <BentoGrid className="dashboard-grid">
+              <Card className="panel">
                 <div className="chart-header">
                   <div>
-                    <h2>Revenue over time</h2>
+                    <h2>
+                      <Icon name="chart" size={16} /> Revenue over time
+                    </h2>
                     <p>Payments received, grouped by month</p>
                   </div>
                   <span className="legend-key">Collected</span>
@@ -237,20 +255,24 @@ export default function IndexPage(_props: { title?: string }) {
                         }))}
                         margin={{ top: 12, right: 22, left: 12, bottom: 8 }}
                       >
-                        <CartesianGrid stroke="#eef1e8" vertical={false} />
+                        <CartesianGrid
+                          stroke="#e8e9eb"
+                          strokeDasharray="3 5"
+                          vertical={false}
+                        />
                         <XAxis
                           dataKey="month"
                           tickFormatter={monthLabel}
                           tickLine={false}
                           axisLine={false}
-                          tick={{ fontSize: 9, fill: "#9ba58e" }}
+                          tick={{ fontSize: 11, fill: "#71717a" }}
                           dy={9}
                           minTickGap={30}
                         />
                         <YAxis
                           tickLine={false}
                           axisLine={false}
-                          tick={{ fontSize: 9, fill: "#9ba58e" }}
+                          tick={{ fontSize: 11, fill: "#71717a" }}
                           width={57}
                           tickFormatter={(v) =>
                             `₹${Number(v) >= 100000 ? `${(Number(v) / 100000).toFixed(1)}L` : Number(v) >= 1000 ? `${(Number(v) / 1000).toFixed(0)}k` : v}`
@@ -263,19 +285,22 @@ export default function IndexPage(_props: { title?: string }) {
                             "Collected",
                           ]}
                           contentStyle={{
-                            fontSize: 11,
-                            border: "1px solid #e1e8d8",
-                            borderRadius: 7,
-                            boxShadow: "0 3px 15px #243a2110",
+                            fontSize: 12,
+                            color: "#fff",
+                            background: "#27272a",
+                            border: "1px solid #3f3f46",
+                            borderRadius: 9,
+                            boxShadow: "0 8px 24px #18181b24",
                           }}
                         />
                         <Area
                           dataKey="value"
-                          stroke="#789a65"
-                          strokeWidth={2}
-                          fill="#eef3e6"
-                          fillOpacity={1}
-                          activeDot={{ r: 4, strokeWidth: 2, stroke: "white" }}
+                          stroke="#2585d5"
+                          strokeWidth={1.8}
+                          fill="#eaf4fc"
+                          fillOpacity={0.65}
+                          dot={{ r: 3, strokeWidth: 1.3, fill: "white" }}
+                          activeDot={{ r: 5, strokeWidth: 2, stroke: "white" }}
                           type="monotone"
                           isAnimationActive={false}
                         />
@@ -294,10 +319,12 @@ export default function IndexPage(_props: { title?: string }) {
                 <div className="chart-footer">
                   Collected revenue comes from payments, not invoice totals.
                 </div>
-              </section>
-              <section className="panel">
+              </Card>
+              <Card className="panel">
                 <div className="panel-title">
-                  <h2>Receivables</h2>
+                  <h2>
+                    <Icon name="credit" size={16} /> Receivables
+                  </h2>
                   <Icon name="credit" size={17} />
                 </div>
                 <div className="insight-list">
@@ -333,11 +360,13 @@ export default function IndexPage(_props: { title?: string }) {
                 <div className="chart-footer">
                   Balances exclude draft, cancelled and paid invoices.
                 </div>
-              </section>
-            </div>
-            <section className="panel" style={{ marginTop: 24 }}>
+              </Card>
+            </BentoGrid>
+            <Card className="panel collections-panel" style={{ marginTop: 18 }}>
               <div className="panel-title">
-                <h2>Monthly collections</h2>
+                <h2>
+                  <Icon name="calendar" size={16} /> Monthly collections
+                </h2>
                 <span className="small muted">INR</span>
               </div>
               <DataTable
@@ -365,7 +394,7 @@ export default function IndexPage(_props: { title?: string }) {
                   },
                 ]}
               />
-            </section>
+            </Card>
             <p className="footer-note">
               <Icon name="info" size={12} />
               Date filters apply to subscription start dates, invoice issue

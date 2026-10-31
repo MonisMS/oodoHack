@@ -1,3 +1,4 @@
+import { Input as LibraryInput } from "./primitives/input";
 import { useState } from "react";
 import { useQuery } from "@tanstack/react-query";
 import { api, queryString, ApiError } from "../../lib/api";
@@ -65,7 +66,7 @@ export function ReferencePicker({
     <div>
       <div className="search-field">
         <Icon name="search" size={14} />
-        <input
+        <LibraryInput
           id={field.id}
           aria-invalid={field.invalid || undefined}
           aria-describedby={field.describedBy}
