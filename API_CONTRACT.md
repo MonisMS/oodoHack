@@ -86,6 +86,8 @@ All request shapes are named Zod schemas reproduced below. `—` means no body/q
 | GET | /api/portal/subscriptions/:id | CUSTOMER | — | — | idParams | 200 Data<Subscription> |
 | GET | /api/portal/invoices | CUSTOMER | — | portalInvoiceQuery | — | 200 Page<Invoice> |
 | GET | /api/portal/invoices/:id | CUSTOMER | — | — | idParams | 200 Data<Invoice> |
+| POST | /api/portal/subscriptions/:id/cancel-at-period-end | CUSTOMER | cancellationInput | — | idParams | 200 Data<PortalSubscription> |
+| POST | /api/portal/subscriptions/:id/keep | CUSTOMER | cancellationInput | — | idParams | 200 Data<PortalSubscription> |
 
 ## Lifecycle and business invariants
 
@@ -124,6 +126,8 @@ Transition uses a transaction, locks/rechecks current status, writes Subscriptio
 - **Change seats/products.** `change-lines` (CONFIRMED/ACTIVE/PAUSED) replaces the lines from the NEXT invoice, no proration; due service is first settled using the old lines, then the change is revalidated under the subscription lock so due periods are never re-priced. Each change writes a history event with the same from/to status.
 - **`billingDue`** (DTO): ACTIVE with `nextInvoiceDate` already reached; staff actions pause/close/cancel/change automatically settle due service, then lock and recheck before applying the change. Invalid actions do not trigger settlement. Billing faults propagate without discarding debt or changing lifecycle state; bounded catch-up may require retry.
 - **Invoices:** `remind` (and bulk `/remind`) emails a payment reminder for OVERDUE invoices only, at most once per 24 hours (`lastReminderAt`, `reminderCount` on the invoice); bulk `confirm`/`send`/`remind` take up to 100 ids and return `{succeeded, failed:[{id,code,message}]}`, each invoice processed independently.
+
+**D (operations) additions:** Subscription responses include `customerName`, `customerEmail`, `planName`, `planBillingPeriod`; Payment responses include `invoiceNumber` and `customerName`; QuotationTemplate responses include `planName`. Tax DELETE deactivates; tax `percentage` is returned without trailing zeros. **Portal (CUSTOMER):** only non-DRAFT subscriptions and CONFIRMED/PARTIALLY_PAID/PAID invoices are visible; `notes`, history actors/reasons, payment `recordedById`/`note` and dunning history are removed; `PortalSummary` adds `overdueInvoices`; `PortalSubscription` adds `canScheduleCancellation` and `canWithdrawCancellation`; the customer id always comes from the session.
 
 ### Billing, taxes and discounts
 
