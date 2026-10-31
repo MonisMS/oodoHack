@@ -226,6 +226,82 @@ describe.skipIf(!TEST_DB)('invoices and payments (A-04)', () => {
     });
   });
 
+  describe('reminders and bulk actions (A-11)', () => {
+    const remind = (id: string) => staff.post(`/api/invoices/${id}/remind`).send({});
+    const bulk = (action: 'confirm' | 'send' | 'remind', ids: string[]) => staff.post(`/api/invoices/${action}`).send({ ids });
+    const overdueInvoice = (over: Over = {}) => makeInvoice({ status: 'CONFIRMED', dueDate: iso(-3), ...over });
+
+    it('emails an overdue invoice reminder (escaped), records it, and throttles to once per 24 hours', async () => {
+      const send = vi.spyOn(invoiceMailer, 'send').mockResolvedValue();
+      const inv = await overdueInvoice({ customerName: '<b>Evil</b> & Co', customerEmail: 'ap@acme.example', total: '500.00' });
+      const r = await remind(inv.id);
+      expect(r.status, JSON.stringify(r.body)).toBe(200);
+      expect(r.body.data).toMatchObject({ reminderCount: 1, overdue: true, outstanding: '500.00' }); expect(r.body.data.lastReminderAt).not.toBeNull();
+      const mail = send.mock.calls[0]![0];
+      expect(mail.to).toBe('ap@acme.example'); expect(mail.subject).toContain(inv.number);
+      expect(mail.html).toContain('3 days overdue'); expect(mail.html).toContain('&lt;b&gt;Evil&lt;/b&gt; &amp; Co'); expect(mail.html).not.toContain('<b>');
+      const again = await remind(inv.id);
+      expect(again.status).toBe(409); expect(again.body.error.message).toMatch(/last 24 hours/); expect(send).toHaveBeenCalledTimes(1);
+      await db.invoice.update({ where: { id: inv.id }, data: { lastReminderAt: new Date(Date.now() - 25 * 3_600_000) } });
+      expect((await remind(inv.id)).body.data.reminderCount).toBe(2); expect(send).toHaveBeenCalledTimes(2);
+      send.mockRestore();
+    });
+
+    it('only reminds invoices that are actually overdue', async () => {
+      const send = vi.spyOn(invoiceMailer, 'send').mockResolvedValue();
+      const cases: Array<[Over, RegExp]> = [
+        [{ status: 'CONFIRMED', dueDate: iso(5) }, /not yet past due/], [{ status: 'DRAFT', dueDate: iso(-5) }, /DRAFT/],
+        [{ status: 'PAID', dueDate: iso(-5), amountPaid: '1180.00' }, /PAID/], [{ status: 'CANCELLED', dueDate: iso(-5) }, /CANCELLED/],
+      ];
+      for (const [over, message] of cases) { const r = await remind((await makeInvoice(over)).id); expect([over.status, r.status]).toEqual([over.status, 409]); expect(r.body.error.message).toMatch(message); }
+      expect((await remind(crypto.randomUUID())).status).toBe(404);
+      const partly = await overdueInvoice(); await pay(partly.id, { amount: '100.00', date: iso(0) });
+      expect((await remind(partly.id)).body.data).toMatchObject({ status: 'PARTIALLY_PAID', outstanding: '1080.00', reminderCount: 1 }); // still collectible, so it is reminded
+      expect(send).toHaveBeenCalledTimes(1); send.mockRestore();
+    });
+
+    it('releases the throttle when delivery fails, so the reminder can be retried', async () => {
+      const inv = await overdueInvoice();
+      const failing = vi.spyOn(invoiceMailer, 'send').mockRejectedValue(new Error('smtp down'));
+      const r = await remind(inv.id);
+      expect(r.status).toBe(502); expect(r.body.error.code).toBe('EMAIL_FAILED');
+      expect(await invoiceOf(inv.id)).toMatchObject({ lastReminderAt: null, reminderCount: 0 }); failing.mockRestore();
+      const ok = vi.spyOn(invoiceMailer, 'send').mockResolvedValue();
+      expect((await remind(inv.id)).status).toBe(200); expect(ok).toHaveBeenCalledTimes(1); ok.mockRestore();
+    });
+
+    it('sends only one reminder when several people click at once', async () => {
+      const send = vi.spyOn(invoiceMailer, 'send').mockResolvedValue();
+      const inv = await overdueInvoice();
+      const rs = await Promise.all(Array.from({ length: 5 }, () => remind(inv.id)));
+      expect(rs.filter(r => r.status === 200)).toHaveLength(1); expect(rs.filter(r => r.status === 409)).toHaveLength(4);
+      expect(send).toHaveBeenCalledTimes(1); expect((await invoiceOf(inv.id)).reminderCount).toBe(1); send.mockRestore();
+    });
+
+    it('bulk confirm processes every invoice independently and reports each failure', async () => {
+      const drafts = await Promise.all([makeInvoice(), makeInvoice(), makeInvoice()]); const paid = await makeInvoice({ status: 'PAID', amountPaid: '1180.00' });
+      const r = await bulk('confirm', [...drafts.map(d => d.id), paid.id, crypto.randomUUID()]);
+      expect(r.status).toBe(200); expect(r.body.data.succeeded).toBe(3);
+      expect(r.body.data.failed.map((f: { id: string; code: string }) => [f.id === paid.id ? 'paid' : 'unknown', f.code])).toEqual([['paid', 'INVALID_TRANSITION'], ['unknown', 'NOT_FOUND']]);
+      for (const d of drafts) expect((await invoiceOf(d.id)).status).toBe('CONFIRMED');
+    });
+
+    it('bulk send and bulk remind report partial success without stopping', async () => {
+      const send = vi.spyOn(invoiceMailer, 'send').mockResolvedValue();
+      const good = await makeInvoice({ status: 'CONFIRMED' }); const draft = await makeInvoice();
+      const s = await bulk('send', [good.id, draft.id]); expect(s.body.data.succeeded).toBe(1); expect(s.body.data.failed).toHaveLength(1); expect((await invoiceOf(good.id)).sentAt).not.toBeNull();
+      const late = await overdueInvoice(); const fresh = await makeInvoice({ status: 'CONFIRMED', dueDate: iso(9) });
+      const rm = await bulk('remind', [late.id, fresh.id]); expect(rm.body.data.succeeded).toBe(1); expect(rm.body.data.failed[0]).toMatchObject({ id: fresh.id, code: 'CONFLICT' });
+      send.mockRestore();
+    });
+
+    it('validates bulk input: 1-100 unique ids', async () => {
+      for (const ids of [[], Array.from({ length: 101 }, () => crypto.randomUUID()), ['not-a-uuid'], [crypto.randomUUID(), 'x']]) expect((await bulk('confirm', ids as string[])).status).toBe(422);
+      const dup = crypto.randomUUID(); expect((await bulk('confirm', [dup, dup])).status).toBe(422);
+      expect((await staff.post('/api/invoices/confirm').send({ ids: [crypto.randomUUID()], extra: 1 })).status).toBe(422);
+    });
+  });
+
   describe('access control', () => {
     it('is staff/admin only for every invoice and payment endpoint', async () => {
       const inv = await makeInvoice({ status: 'CONFIRMED' });

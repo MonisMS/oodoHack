@@ -27,3 +27,12 @@ export function renderInvoiceEmail(i: InvoiceEmailData): OutgoingEmail {
     + `<p><strong>Total ${escapeHtml(i.currency)} ${escapeHtml(i.total)}</strong> &middot; paid ${escapeHtml(i.amountPaid)} &middot; outstanding ${escapeHtml(i.outstanding)}</p>`;
   return { to: i.customerEmail, subject: `Invoice ${i.number} from Brightloop`, html };
 }
+
+/** Polite payment reminder for an overdue invoice; built from frozen values, every dynamic value escaped. */
+export function renderReminderEmail(i: { number: string; customerName: string; customerEmail: string; dueDate: string; outstanding: string; currency: string; daysOverdue: number }): OutgoingEmail {
+  const html = `<h2>Payment reminder: invoice ${escapeHtml(i.number)}</h2><p>Hello ${escapeHtml(i.customerName)},</p>`
+    + `<p>Our records show invoice ${escapeHtml(i.number)} was due on ${escapeHtml(i.dueDate)} and is now ${i.daysOverdue} day${i.daysOverdue === 1 ? '' : 's'} overdue.</p>`
+    + `<p><strong>Outstanding: ${escapeHtml(i.currency)} ${escapeHtml(i.outstanding)}</strong></p><p>If you have already paid, please ignore this message.</p>`;
+  return { to: i.customerEmail, subject: `Reminder: invoice ${i.number} is overdue`, html };
+}
+

@@ -7,7 +7,7 @@ import { dateOnly, parseDate, todayBusiness } from '../../lib/dates.js';
 import { lockRow } from '../../lib/locks.js';
 import type { Principal } from '../../middleware/auth.js';
 import { toPaymentDto } from '../payments/service.js';
-import { invoiceMailer, renderInvoiceEmail } from './mailer.js';
+import { invoiceMailer, renderInvoiceEmail, renderReminderEmail } from './mailer.js';
 import { canSend, canTransitionInvoice } from './rules.js';
 import type { invoiceQuery } from './schemas.js';
 
@@ -36,6 +36,7 @@ export function toInvoiceDto(i: InvoiceWithRelations, today = todayBusiness()) {
     subtotal: i.subtotal.toFixed(2), discountTotal: i.discountTotal.toFixed(2), taxTotal: i.taxTotal.toFixed(2), total: i.total.toFixed(2), amountPaid: i.amountPaid.toFixed(2),
     outstanding: open ? i.total.minus(i.amountPaid).toFixed(2) : '0.00', overdue: open && dueDate < today,
     currency: i.currency as 'INR', sentAt: i.sentAt ? i.sentAt.toISOString() : null,
+    lastReminderAt: i.lastReminderAt ? i.lastReminderAt.toISOString() : null, reminderCount: i.reminderCount,
     lines: i.lines.map(l => ({
       id: l.id, invoiceId: l.invoiceId, kind: l.kind, productId: l.productId, variantId: l.variantId, discountId: l.discountId, description: l.description, quantity: l.quantity,
       unitPrice: l.unitPrice.toFixed(2), subtotal: l.subtotal.toFixed(2), taxTotal: l.taxTotal.toFixed(2), total: l.total.toFixed(2), taxes: l.taxes as unknown as Array<Pick<FrozenTax,'taxId'|'name'|'percentage'|'amount'> & Partial<Pick<FrozenTax,'taxableBase'|'grossBase'|'discountAmount'|'discounts'>>>, position: l.position,
@@ -110,3 +111,52 @@ export async function send(id: string, actor: Principal) {
   await db.invoice.update({ where: { id }, data: { sentAt: new Date() } });
   return get(id, actor);
 }
+
+/** Minimum gap between two reminders for the same invoice. */
+const REMINDER_INTERVAL_MS = 24 * 60 * 60 * 1000;
+
+/**
+ * Emails a payment reminder for an overdue invoice. The throttle slot is claimed atomically BEFORE sending, so two staff
+ * members clicking at once cannot send twice; if delivery fails the claim is released and nothing counts as sent.
+ */
+export async function remind(id: string, actor: Principal) {
+  const existing = await db.invoice.findUnique({ where: { id }, select: { lastReminderAt: true, reminderCount: true } });
+  if (!existing) throw new AppError(404, 'NOT_FOUND', 'Invoice not found');
+  const today = parseDate(todayBusiness());
+  const claimed = await db.invoice.updateMany({
+    where: { id, status: { in: OPEN }, dueDate: { lt: today }, OR: [{ lastReminderAt: null }, { lastReminderAt: { lt: new Date(Date.now() - REMINDER_INTERVAL_MS) } }] },
+    data: { lastReminderAt: new Date(), reminderCount: { increment: 1 } },
+  });
+  if (claimed.count === 0) {
+    const row = await db.invoice.findUniqueOrThrow({ where: { id }, include: invoiceInclude });
+    const dto = toInvoiceDto(row);
+    if (!dto.overdue) throw new AppError(409, 'CONFLICT', `Only overdue invoices can be reminded (this one is ${row.status}${row.status === 'CONFIRMED' || row.status === 'PARTIALLY_PAID' ? ', not yet past due' : ''})`);
+    throw new AppError(409, 'CONFLICT', 'A reminder was already sent for this invoice in the last 24 hours');
+  }
+  const invoice = await db.invoice.findUniqueOrThrow({ where: { id }, include: invoiceInclude });
+  const dto = toInvoiceDto(invoice);
+  const daysOverdue = Math.max(1, Math.round((parseDate(todayBusiness()).getTime() - invoice.dueDate.getTime()) / 86_400_000));
+  try { await invoiceMailer.send(renderReminderEmail({ number: dto.number, customerName: dto.customerName, customerEmail: dto.customerEmail, dueDate: dto.dueDate, outstanding: dto.outstanding, currency: dto.currency, daysOverdue })); } catch (error) {
+    console.error('Reminder email failed', error);
+    await db.invoice.update({ where: { id }, data: { lastReminderAt: existing.lastReminderAt, reminderCount: existing.reminderCount } }); // release the claim
+    throw new AppError(502, 'EMAIL_FAILED', 'The reminder email could not be sent; nothing was marked as sent');
+  }
+  return get(id, actor);
+}
+
+// ---- bulk actions: every invoice is processed independently (its own lock/transaction); failures never block the rest.
+export interface BulkResult { succeeded: number; failed: Array<{ id: string; code: string; message: string }> }
+async function bulk(ids: string[], action: (id: string) => Promise<unknown>): Promise<BulkResult> {
+  const result: BulkResult = { succeeded: 0, failed: [] };
+  for (const id of ids) {
+    try { await action(id); result.succeeded += 1; } catch (error) {
+      if (error instanceof AppError) result.failed.push({ id, code: error.code, message: error.message });
+      else { console.error('Bulk invoice action failed', error); result.failed.push({ id, code: 'INTERNAL_ERROR', message: 'An unexpected error occurred' }); }
+    }
+  }
+  return result;
+}
+export const confirmMany = (ids: string[], actor: Principal) => bulk(ids, id => confirm(id, actor));
+export const sendMany = (ids: string[], actor: Principal) => bulk(ids, id => send(id, actor));
+export const remindMany = (ids: string[], actor: Principal) => bulk(ids, id => remind(id, actor));
+
