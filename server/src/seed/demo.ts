@@ -41,7 +41,7 @@ export async function seedDemoSubscriptions(db: PrismaClient, catalog: SeedCatal
     if (await db.subscription.findFirst({ where: { notes: marker(spec.key) }, select: { id: true } })) continue;
     const startDate = addDays(today, spec.start);
     const sub = spec.template
-      ? await createFromTemplate({ templateId: catalog.templates[spec.template], customerId: spec.customer, startDate, paymentTermsDays: spec.terms ?? 15, notes: marker(spec.key) }, ADMIN)
+      ? await createFromTemplate({ templateId: catalog.templates[spec.template], customerId: spec.customer, startDate, expiryDate: null, paymentTermsDays: spec.terms ?? 15, notes: marker(spec.key) }, ADMIN)
       : await create({
         customerId: spec.customer, planId: catalog.plans[spec.plan]!.id, startDate, expiryDate: spec.expiry === undefined ? null : addDays(today, spec.expiry), paymentTermsDays: spec.terms ?? 15, notes: marker(spec.key),
         lines: spec.lines.map(l => ({ productId: catalog.products[l.product]!.id, variantId: l.variant === undefined ? null : catalog.products[l.product]!.variants[l.variant]!.id, quantity: l.qty })),
