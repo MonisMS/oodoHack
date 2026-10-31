@@ -5,6 +5,8 @@ import { AppError } from '../../lib/errors.js';
 import { lockRow } from '../../lib/locks.js';
 import { nextNumber } from '../../lib/numbers.js';
 import { planSubscriptionTransition } from '../../lib/domain/states.js';
+import { DomainError } from '../../lib/domain/errors.js';
+import { billSubscription } from '../billing-engine/service.js';
 import { addDays, assertCustomer, assertPlanSelectable, assertScheduleBounds, dateOnly, parseDate, resolveLines, todayBusiness, totalQuantity, type LineIn, type Tx } from '../../lib/catalog-lines.js';
 import type { Principal } from '../../middleware/auth.js';
 import { allowedTransitions, canTransition, needsRevalidation } from './rules.js';
@@ -141,8 +143,20 @@ export async function remove(id: string, _actor: Principal) {
   });
 }
 
+/** Never nest billing's lock/transaction inside a lifecycle transaction. The first attempt performs
+ * validation; only an explicit backlog rejection triggers settlement, then all guards run again.
+ */
+async function withBillingSettlement(id: string, operation: () => Promise<void>) {
+  try { await operation(); }
+  catch (error) {
+    if (!(error instanceof AppError || error instanceof DomainError) || error.code !== 'BILLING_BACKLOG') throw error;
+    await billSubscription(id, todayBusiness());
+    await operation();
+  }
+}
+
 export async function transition(id: string, input: TransitionInput, actor: Principal) {
-  await db.$transaction(async tx => {
+  await withBillingSettlement(id, () => db.$transaction(async tx => {
     await lock(tx, id);
     // Re-read under the row lock so two concurrent transitions cannot both act on a stale status.
     const sub = await tx.subscription.findUniqueOrThrow({ where: { id }, include: { plan: true, lines: true } });
@@ -157,7 +171,7 @@ export async function transition(id: string, input: TransitionInput, actor: Prin
     }
     const coverage = await tx.invoice.aggregate({ where: { subscriptionId: id }, _max: { periodEnd: true } });
     const change = planSubscriptionTransition(from,input.to,{
-      plan:sub.plan,expiryDate,today:todayBusiness(),renewalExpiryDate:input.renewalExpiryDate,
+      plan:sub.plan,expiryDate,today:todayBusiness(),startDate:dateOnly(sub.startDate),renewalExpiryDate:input.renewalExpiryDate,
       nextInvoiceDate:dateOnly(sub.nextInvoiceDate),billingAnchorDay:sub.billingAnchorDay,billingAnchorMonth:sub.billingAnchorMonth,
       lastInvoicePeriodEnd:coverage._max.periodEnd ? dateOnly(coverage._max.periodEnd) : null,
     });
@@ -166,7 +180,7 @@ export async function transition(id: string, input: TransitionInput, actor: Prin
     const renewing = from === 'CLOSED' && input.to === 'ACTIVE';
     await tx.subscription.update({ where:{id},data:{status:change.status,nextInvoiceDate:parseDate(change.nextInvoiceDate),billingAnchorDay:change.billingAnchorDay,billingAnchorMonth:change.billingAnchorMonth,expiryDate:change.expiryDate ? parseDate(change.expiryDate) : null,...(renewing ? { planPrice: sub.plan.price, cancelScheduledAt: null, expiryBeforeCancellation: null } : {})} });
     await tx.subscriptionEvent.create({ data: { subscriptionId: id, fromStatus: from, toStatus: input.to, actorId: actor.id, reason: input.reason ?? null } });
-  });
+  }));
   return get(id, actor);
 }
 
@@ -178,7 +192,7 @@ const backlog = () => new AppError(409, 'BILLING_BACKLOG', 'Run billing for the 
  * invoicing at expiry and, for autoClose plans, closes the subscription automatically afterwards.
  */
 export async function scheduleCancellation(id: string, input: CancellationInput, actor: Principal) {
-  await db.$transaction(async tx => {
+  await withBillingSettlement(id, () => db.$transaction(async tx => {
     await lock(tx, id);
     const sub = await tx.subscription.findUniqueOrThrow({ where: { id }, include: { plan: true } });
     if (sub.status !== 'ACTIVE') throw new AppError(409, 'INVALID_TRANSITION', `Only ACTIVE subscriptions can be scheduled for cancellation (this one is ${sub.status})`);
@@ -191,7 +205,7 @@ export async function scheduleCancellation(id: string, input: CancellationInput,
     if (current && current <= endsOn) throw new AppError(409, 'CONFLICT', `The subscription already ends on ${current}`);
     await tx.subscription.update({ where: { id }, data: { expiryDate: parseDate(endsOn), cancelScheduledAt: new Date(), expiryBeforeCancellation: sub.expiryDate } });
     await tx.subscriptionEvent.create({ data: { subscriptionId: id, fromStatus: sub.status, toStatus: sub.status, actorId: actor.id, reason: `Cancellation scheduled: ends ${endsOn}${input.reason ? ` (${input.reason})` : ''}` } });
-  });
+  }));
   return get(id, actor);
 }
 
@@ -211,22 +225,22 @@ export async function unscheduleCancellation(id: string, input: CancellationInpu
 
 /**
  * Seat/product changes on a running subscription. The new lines apply from the NEXT invoice: invoices that already exist
- * are immutable, and there is no proration (v1). Not allowed while billing is due, so due periods are never re-priced.
+ * are immutable, and there is no proration (v1). Settle due service using old lines before applying the new ones.
  */
 export async function changeLines(id: string, input: ChangeLinesInput, actor: Principal) {
-  await db.$transaction(async tx => {
+  await withBillingSettlement(id, () => db.$transaction(async tx => {
     await lock(tx, id);
     const sub = await tx.subscription.findUniqueOrThrow({ where: { id }, include: { plan: true } });
     if (sub.status !== 'CONFIRMED' && sub.status !== 'ACTIVE' && sub.status !== 'PAUSED') throw new AppError(409, 'CONFLICT', `Lines of a ${sub.status} subscription are changed by editing it (DRAFT/QUOTATION) or are final (CLOSED)`);
-    if (isBillingDue(sub)) throw backlog();
     const resolved = await resolveLines(tx, input.lines, 'freeze');
     const quantity = totalQuantity(resolved);
     if (quantity < sub.plan.minQuantity) throw new AppError(422, 'VALIDATION_ERROR', 'Check the submitted fields', { lines: [`Total quantity ${quantity} is below the plan minimum of ${sub.plan.minQuantity}`] });
+    if (isBillingDue(sub)) throw backlog();
     await tx.subscriptionLine.deleteMany({ where: { subscriptionId: id } });
     await tx.subscriptionLine.createMany({ data: resolved.map((l, position) => ({ subscriptionId: id, productId: l.productId, variantId: l.variantId, description: l.description, quantity: l.quantity, unitPrice: l.unitPrice as string, position })) });
     await tx.subscription.update({ where: { id }, data: { updatedAt: new Date() } });
     await tx.subscriptionEvent.create({ data: { subscriptionId: id, fromStatus: sub.status, toStatus: sub.status, actorId: actor.id, reason: `Lines changed, effective from the next invoice${input.reason ? ` (${input.reason})` : ''}` } });
-  });
+  }));
   return get(id, actor);
 }
 

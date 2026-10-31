@@ -28,6 +28,8 @@ export interface SubscriptionTransitionContext {
   plan: { pausable: boolean; renewable: boolean; closableEarly: boolean };
 }
 export interface InvoiceTransitionContext {
+  /** Caller checked under the subscription lock that no other invoice covers this period. */
+  periodUncovered?: boolean;
   totalMinor: number;
   amountPaidMinor: number;
   paymentCount: number;
@@ -117,8 +119,13 @@ export function allowedInvoiceTransitions(
       ];
     case "PARTIALLY_PAID":
       return amountPaidMinor === totalMinor ? ["PAID"] : [];
-    case "PAID":
     case "CANCELLED":
+      return context.periodUncovered === true &&
+        paymentCount === 0 &&
+        amountPaidMinor === 0
+        ? ["DRAFT"]
+        : [];
+    case "PAID":
       return [];
     default:
       return [];
@@ -194,6 +201,7 @@ export function assertSubscriptionTransition(
 }
 
 export interface TransitionScheduleContext extends SubscriptionTransitionContext {
+  startDate: DateOnly;
   nextInvoiceDate: DateOnly;
   billingAnchorDay: number;
   billingAnchorMonth: number;
@@ -212,6 +220,7 @@ export function planSubscriptionTransition(
   context: TransitionScheduleContext,
 ) {
   assertSubscriptionTransition(from, to, context);
+  parseDate(context.startDate);
   parseDate(context.nextInvoiceDate);
   if (context.lastInvoicePeriodEnd) parseDate(context.lastInvoicePeriodEnd);
   if (from === "ACTIVE" && (to === "PAUSED" || to === "CLOSED")) {
@@ -228,11 +237,19 @@ export function planSubscriptionTransition(
   const restarting =
     to === "ACTIVE" && (from === "PAUSED" || from === "CLOSED");
   const nextInvoiceDate = restarting
-    ? context.lastInvoicePeriodEnd &&
-      context.lastInvoicePeriodEnd > context.today
-      ? context.lastInvoicePeriodEnd
-      : context.today
+    ? [
+        context.today,
+        context.startDate,
+        context.lastInvoicePeriodEnd ?? context.startDate,
+      ]
+        .sort()
+        .at(-1)!
     : context.nextInvoiceDate;
+  invariant(
+    nextInvoiceDate >= context.startDate,
+    "INVALID_SCHEDULE",
+    "Billing date cannot precede the subscription start",
+  );
   const anchor = restarting
     ? anchorFor(nextInvoiceDate)
     : { day: context.billingAnchorDay, month: context.billingAnchorMonth };
@@ -258,7 +275,7 @@ export function planSubscriptionTransition(
 export function canTransitionInvoice(
   from: InvoiceStatus,
   to: InvoiceStatus,
-  context: { paymentCount: number },
+  context: { paymentCount: number; periodUncovered?: boolean },
 ): { ok: true } | { ok: false; reason: string } {
   invariant(
     Number.isSafeInteger(context.paymentCount) && context.paymentCount >= 0,
@@ -266,6 +283,15 @@ export function canTransitionInvoice(
     "Payment count is invalid",
   );
   if (from === to) return { ok: false, reason: `Invoice is already ${from}` };
+  if (from === "CANCELLED" && to === "DRAFT") {
+    return context.paymentCount === 0 && context.periodUncovered === true
+      ? { ok: true }
+      : {
+          ok: false,
+          reason:
+            "Reopening requires no payments and verified uncovered invoice coverage",
+        };
+  }
   if (from === "PAID" || from === "CANCELLED")
     return { ok: false, reason: `A ${from} invoice cannot change status` };
   if (

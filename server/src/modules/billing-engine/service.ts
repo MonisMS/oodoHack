@@ -3,6 +3,7 @@ import { performance } from "node:perf_hooks";
 import { db } from "../../lib/db.js";
 import { billingInput } from "../../lib/contracts.js";
 import { nextNumber } from "../../lib/numbers.js";
+import { todayBusiness } from "../../lib/dates.js";
 import { DomainError, invariant } from "../../lib/domain/errors.js";
 import {
   buildInvoiceDraft,
@@ -53,8 +54,9 @@ const subscriptionSelect = {
   billingAnchorDay: true,
   billingAnchorMonth: true,
   paymentTermsDays: true,
+  planPrice: true,
   customerId: true,
-  customer: { select: { name: true, email: true, role: true } },
+  customer: { select: { name: true, email: true, role: true, isActive: true } },
   plan: {
     select: {
       id: true,
@@ -145,6 +147,7 @@ export function createBillingService(
   async function processSubscription(
     subscriptionId: string,
     input: Required<BillingInput>,
+    closeExpired = true,
   ) {
     return withTransactionRetry(
       () =>
@@ -165,7 +168,12 @@ export function createBillingService(
               return { created: 0, autoClosed: 0 };
             const expiry = sub.expiryDate ? dateOnly(sub.expiryDate) : null;
             if (sub.status === "PAUSED") {
-              if (expiry && expiry < input.asOfDate && sub.plan.autoClose) {
+              if (
+                closeExpired &&
+                expiry &&
+                expiry < input.asOfDate &&
+                sub.plan.autoClose
+              ) {
                 const paused = await tx.subscriptionEvent.findFirst({
                   where: {
                     subscriptionId: sub.id,
@@ -178,9 +186,9 @@ export function createBillingService(
                 invariant(
                   !paused ||
                     dateOnly(sub.nextInvoiceDate) >
-                      (expiry < dateOnly(paused.createdAt)
+                      (expiry < todayBusiness(paused.createdAt)
                         ? expiry
-                        : dateOnly(paused.createdAt)),
+                        : todayBusiness(paused.createdAt)),
                   "BILLING_BACKLOG",
                   "Unbilled active service before the pause requires reconciliation before automatic closure",
                 );
@@ -204,7 +212,8 @@ export function createBillingService(
             const resumed = sub.history[0];
             invariant(
               !resumed ||
-                dateOnly(sub.nextInvoiceDate) >= dateOnly(resumed.createdAt),
+                dateOnly(sub.nextInvoiceDate) >=
+                  todayBusiness(resumed.createdAt),
               "SCHEDULE_RECONCILIATION_REQUIRED",
               "Resume/renew must reset the schedule before billing so paused or closed gaps are not charged",
             );
@@ -219,9 +228,9 @@ export function createBillingService(
               "The billing cursor overlaps an existing invoice period; reconcile the schedule instead of charging twice",
             );
             invariant(
-              sub.customer.role === "CUSTOMER",
+              sub.customer.role === "CUSTOMER" && sub.customer.isActive,
               "INVALID_CUSTOMER",
-              "The subscription must belong to a customer",
+              "The subscription must belong to an active customer",
             );
             invariant(
               Number.isInteger(sub.paymentTermsDays) &&
@@ -323,7 +332,7 @@ export function createBillingService(
                   productId: null,
                   description: sub.plan.name,
                   quantity: 1,
-                  unitPrice: sub.plan.price.toFixed(2),
+                  unitPrice: (sub.planPrice ?? sub.plan.price).toFixed(2),
                   taxes: taxInput(sub.plan.taxes),
                 },
                 ...sub.lines.map((line) => ({
@@ -414,6 +423,7 @@ export function createBillingService(
               }
             }
             const autoClose = !!(
+              closeExpired &&
               expiry &&
               expiry < input.asOfDate &&
               schedule.nextInvoiceDate > expiry &&
@@ -524,7 +534,57 @@ export function createBillingService(
     result.hasMore = (await candidates(input.asOfDate, omit, 1)).length > 0;
     return result;
   }
-  return { runBilling };
+  /** One subscription only, with the same lock, atomic batch and retry policy as scheduled billing.
+   * Bounded draining handles daily backlogs beyond the HTTP batch cap. A failure is propagated;
+   * committed earlier batches remain valid and retrying cannot duplicate them.
+   * Call outside a lifecycle transaction, then recheck status/cursor under that transaction's lock.
+   */
+  async function billSubscription(
+    subscriptionId: string,
+    asOfDate: string,
+  ): Promise<{ created: number }> {
+    invariant(
+      /^[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}$/i.test(
+        subscriptionId,
+      ),
+      "INVALID_SUBSCRIPTION",
+      "A valid subscription ID is required",
+    );
+    const input = billingInput.parse({
+      asOfDate,
+      maxPeriodsPerSubscription: 120,
+    });
+    parseDate(input.asOfDate);
+    invariant(
+      input.asOfDate <= todayBusiness(),
+      "INVALID_DATE",
+      "Billing date cannot be in the future",
+    );
+    const started = performance.now();
+    let created = 0;
+    for (let batch = 0; batch < 32; batch += 1) {
+      const outcome = await processSubscription(subscriptionId, input, false);
+      created += outcome.created;
+      const remaining = await client.$queryRaw<{ id: string }[]>(Prisma.sql`
+        SELECT s.id FROM "Subscription" s JOIN "Plan" p ON p.id = s."planId"
+        WHERE s.id = ${subscriptionId}::uuid AND s.status = 'ACTIVE'::"SubscriptionStatus"
+          AND s."startDate" <= ${input.asOfDate}::date AND s."nextInvoiceDate" <= ${input.asOfDate}::date
+          AND (s."expiryDate" IS NULL OR s."nextInvoiceDate" <= s."expiryDate") LIMIT 1`);
+      if (remaining.length === 0) return { created };
+      invariant(
+        outcome.created > 0 && performance.now() - started < maxDuration,
+        "BILLING_BACKLOG",
+        "Billing settlement reached its safe limit; retry before changing the subscription",
+      );
+    }
+    throw new DomainError(
+      "BILLING_BACKLOG",
+      "Billing settlement reached its batch limit; retry before changing the subscription",
+    );
+  }
+  return { runBilling, billSubscription };
 }
 
-export const runBilling = createBillingService(db).runBilling;
+const billingService = createBillingService(db);
+export const runBilling = billingService.runBilling;
+export const billSubscription = billingService.billSubscription;

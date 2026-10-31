@@ -4,6 +4,7 @@ import {
   INVOICE_STATUSES,
   allowedTransitions,
   canTransition,
+  canTransitionInvoice,
   planSubscriptionTransition,
   type SubscriptionTransitionContext,
 } from "../../src/lib/domain/states.js";
@@ -129,6 +130,7 @@ describe("explicit state machines", () => {
     const schedule = {
       ...context,
       plan: { pausable: true, renewable: true, closableEarly: true },
+      startDate: "2026-01-01",
       nextInvoiceDate: "2026-06-01",
       billingAnchorDay: 1,
       billingAnchorMonth: 1,
@@ -165,5 +167,86 @@ describe("explicit state machines", () => {
         nextInvoiceDate: "2026-11-01",
       }).nextInvoiceDate,
     ).toBe("2026-11-01");
+  });
+  it("restarts future subscriptions at their start or existing coverage, with valid anchors", () => {
+    const future = {
+      ...context,
+      startDate: "2026-12-15",
+      nextInvoiceDate: "2026-12-15",
+      billingAnchorDay: 15,
+      billingAnchorMonth: 12,
+      lastInvoicePeriodEnd: null,
+      plan: { pausable: true, renewable: true, closableEarly: true },
+    };
+    for (const from of ["PAUSED", "CLOSED"] as const) {
+      const result = planSubscriptionTransition(from, "ACTIVE", {
+        ...future,
+        renewalExpiryDate: "2027-12-31",
+      });
+      expect(result).toMatchObject({
+        nextInvoiceDate: "2026-12-15",
+        billingAnchorDay: 15,
+        billingAnchorMonth: 12,
+      });
+      expect(
+        planSubscriptionTransition(from, "ACTIVE", {
+          ...future,
+          renewalExpiryDate: "2027-12-31",
+          lastInvoicePeriodEnd: "2026-12-31",
+        }).nextInvoiceDate,
+      ).toBe("2026-12-31");
+    }
+    expect(() =>
+      planSubscriptionTransition("CLOSED", "ACTIVE", {
+        ...future,
+        expiryDate: null,
+        renewalExpiryDate: "2026-11-30",
+      }),
+    ).toThrow(/ends before/);
+    expect(() =>
+      planSubscriptionTransition("PAUSED", "ACTIVE", {
+        ...future,
+        startDate: "invalid",
+      }),
+    ).toThrow();
+  });
+  it("only reopens cancelled invoices with no money and explicit uncovered-period verification", () => {
+    const empty = { totalMinor: 100, amountPaidMinor: 0, paymentCount: 0 };
+    expect(canTransition("invoice", "CANCELLED", "DRAFT", empty)).toBe(false);
+    expect(
+      canTransition("invoice", "CANCELLED", "DRAFT", {
+        ...empty,
+        periodUncovered: true,
+      }),
+    ).toBe(true);
+    expect(
+      canTransition("invoice", "CANCELLED", "DRAFT", {
+        ...empty,
+        amountPaidMinor: 1,
+        paymentCount: 1,
+        periodUncovered: true,
+      }),
+    ).toBe(false);
+    expect(
+      canTransitionInvoice("CANCELLED", "DRAFT", {
+        paymentCount: 0,
+        periodUncovered: true,
+      }).ok,
+    ).toBe(true);
+    expect(
+      canTransitionInvoice("CANCELLED", "DRAFT", { paymentCount: 0 }).ok,
+    ).toBe(false);
+    expect(
+      canTransitionInvoice("CANCELLED", "DRAFT", {
+        paymentCount: 1,
+        periodUncovered: true,
+      }).ok,
+    ).toBe(false);
+    expect(
+      canTransitionInvoice("PAID", "DRAFT", {
+        paymentCount: 1,
+        periodUncovered: true,
+      }).ok,
+    ).toBe(false);
   });
 });

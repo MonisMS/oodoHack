@@ -394,6 +394,7 @@ describe.skipIf(!URL)("PostgreSQL billing invariants", () => {
     await run();
     const context = {
       today: "2026-01-15",
+      startDate: "2026-01-01",
       expiryDate: null,
       plan: { pausable: true, renewable: true, closableEarly: true },
       nextInvoiceDate: "2026-02-01",
@@ -608,5 +609,143 @@ describe.skipIf(!URL)("PostgreSQL billing invariants", () => {
         .toISOString()
         .slice(0, 10),
     ).toBe("2026-01-01");
+  });
+  it("uses the locked plan fee across catalog edits, including zero, with legacy null fallback", async () => {
+    const f = await fixture();
+    await db.plan.update({ where: { id: f.plan.id }, data: { price: "10" } });
+    await db.subscription.update({
+      where: { id: f.sub.id },
+      data: { planPrice: "10" },
+    });
+    await run("2026-01-01");
+    await db.plan.update({ where: { id: f.plan.id }, data: { price: "99" } });
+    await run("2026-02-01");
+    const fee = async () =>
+      (
+        await db.invoice.findMany({
+          where: { subscriptionId: f.sub.id },
+          orderBy: { periodStart: "asc" },
+          include: { lines: true },
+        })
+      ).map((i) =>
+        i.lines.find((l) => l.productId === null)!.unitPrice.toFixed(2),
+      );
+    expect(await fee()).toEqual(["10.00", "10.00"]);
+    await db.subscription.update({
+      where: { id: f.sub.id },
+      data: { planPrice: "0" },
+    });
+    await run("2026-03-01");
+    await db.subscription.update({
+      where: { id: f.sub.id },
+      data: { planPrice: null },
+    });
+    await run("2026-04-01");
+    expect(await fee()).toEqual(["10.00", "10.00", "0.00", "99.00"]);
+  });
+  it("settles only the requested subscription, drains daily backlog beyond 120 periods and stays idempotent", async () => {
+    const f = await fixture({
+      start: "2026-01-01",
+      expiry: "2026-05-10",
+      autoClose: true,
+    });
+    const other = await fixture();
+    await db.plan.update({
+      where: { id: f.plan.id },
+      data: { billingPeriod: "DAILY" },
+    });
+    const service = createBillingService(db);
+    expect(await service.billSubscription(f.sub.id, "2026-05-11")).toEqual({
+      created: 130,
+    });
+    expect(await service.billSubscription(f.sub.id, "2026-05-11")).toEqual({
+      created: 0,
+    });
+    expect(
+      await db.invoice.count({ where: { subscriptionId: other.sub.id } }),
+    ).toBe(0);
+    expect(
+      (await db.subscription.findUniqueOrThrow({ where: { id: f.sub.id } }))
+        .status,
+    ).toBe("ACTIVE");
+  });
+  it("propagates settlement failures and rolls back its financial batch", async () => {
+    const f = await fixture();
+    const d = await discount();
+    const counter = await db.counter.findUnique({
+      where: { prefix_year: { prefix: "INV", year: 2026 } },
+    });
+    const service = createBillingService(db, {
+      buildDraft(input) {
+        if (input.periodStart === "2026-02-01")
+          throw new Error("injected settlement fault");
+        return buildInvoiceDraft(input);
+      },
+    });
+    await expect(
+      service.billSubscription(f.sub.id, "2026-02-01"),
+    ).rejects.toThrow(/injected/);
+    expect(
+      await db.invoice.count({ where: { subscriptionId: f.sub.id } }),
+    ).toBe(0);
+    expect(
+      (await db.discount.findUniqueOrThrow({ where: { id: d.id } })).usedCount,
+    ).toBe(0);
+    expect(
+      (
+        await db.subscription.findUniqueOrThrow({ where: { id: f.sub.id } })
+      ).nextInvoiceDate
+        .toISOString()
+        .slice(0, 10),
+    ).toBe("2026-01-01");
+    expect(
+      await db.counter.findUnique({
+        where: { prefix_year: { prefix: "INV", year: 2026 } },
+      }),
+    ).toEqual(counter);
+  });
+  it("serializes targeted settlement against a batch run without duplicate invoices or discount usage", async () => {
+    const f = await fixture();
+    const d = await discount();
+    let single: Promise<{ created: number }>;
+    let batch: Promise<BillingResult>;
+    await db.$transaction(
+      async (tx) => {
+        await tx.$queryRaw`SELECT id FROM "Subscription" WHERE id=${f.sub.id}::uuid FOR UPDATE`;
+        single = createBillingService(db).billSubscription(
+          f.sub.id,
+          "2026-01-01",
+        );
+        batch = run();
+        await waitForLockWaiters("Subscription");
+      },
+      { timeout: 6000 },
+    );
+    const results = await Promise.all([single!, batch!]);
+    expect(results.reduce((sum, r) => sum + r.created, 0)).toBe(1);
+    expect(
+      await db.invoice.count({ where: { subscriptionId: f.sub.id } }),
+    ).toBe(1);
+    expect(
+      (await db.discount.findUniqueOrThrow({ where: { id: d.id } })).usedCount,
+    ).toBe(1);
+  });
+  it("refuses future settlement and inactive customers without creating financial records", async () => {
+    const f = await fixture();
+    const service = createBillingService(db);
+    await expect(
+      service.billSubscription(f.sub.id, "9999-01-01"),
+    ).rejects.toMatchObject({ code: "INVALID_DATE" });
+    await db.user.update({
+      where: { id: f.user.id },
+      data: { isActive: false },
+    });
+    await expect(
+      service.billSubscription(f.sub.id, "2026-01-01"),
+    ).rejects.toMatchObject({ code: "INVALID_CUSTOMER" });
+    expect(
+      await db.invoice.count({ where: { subscriptionId: f.sub.id } }),
+    ).toBe(0);
+    expect((await run()).failures[0]!.code).toBe("INVALID_CUSTOMER");
   });
 });

@@ -157,24 +157,20 @@ describe.skipIf(!TEST_DB)("merged A/B real HTTP financial flow", () => {
     });
     owned.discounts.push(invoiceDiscount.id);
 
-    const template = await actor
-      .post("/api/quotation-templates")
-      .send({
-        name: "Flow template",
-        planId: plan.id,
-        validityDays: 30,
-        lines: [{ productId: product.id, variantId: variant.id, quantity: 1 }],
-      });
+    const template = await actor.post("/api/quotation-templates").send({
+      name: "Flow template",
+      planId: plan.id,
+      validityDays: 30,
+      lines: [{ productId: product.id, variantId: variant.id, quantity: 1 }],
+    });
     expect(template.status).toBe(201);
     owned.templates.push(template.body.data.id);
-    const created = await actor
-      .post("/api/subscriptions/from-template")
-      .send({
-        templateId: template.body.data.id,
-        customerId,
-        startDate: today,
-        paymentTermsDays: 15,
-      });
+    const created = await actor.post("/api/subscriptions/from-template").send({
+      templateId: template.body.data.id,
+      customerId,
+      startDate: today,
+      paymentTermsDays: 15,
+    });
     expect(created.status).toBe(201);
     const id = created.body.data.id as string;
     owned.subs.push(id);
@@ -185,10 +181,11 @@ describe.skipIf(!TEST_DB)("merged A/B real HTTP financial flow", () => {
           .status,
       ).toBe(200);
     const blocked = await actor
-      .post(`/api/subscriptions/${id}/transition`)
-      .send({ to: "PAUSED" });
-    expect(blocked.status).toBe(409);
-    expect(blocked.body.error.code).toBe("BILLING_BACKLOG");
+      .post("/api/billing/run")
+      .send({ asOfDate: "2036-01-01", maxPeriodsPerSubscription: 120 });
+    expect(blocked.status).toBe(422);
+    expect(blocked.body.error.fields.asOfDate).toBeDefined();
+    expect(await db.invoice.count({ where: { subscriptionId: id } })).toBe(0);
 
     const billed = await actor
       .post("/api/billing/run")
@@ -215,19 +212,46 @@ describe.skipIf(!TEST_DB)("merged A/B real HTTP financial flow", () => {
     );
     expect(charge.taxes[0].taxableBase).toBeDefined();
     expect(charge.taxes[0].discounts).toBeDefined();
+    const frozen = invoice.body.data;
+    const usageBefore = await db.discount.findMany({
+      where: { id: { in: owned.discounts } },
+      orderBy: { id: "asc" },
+      select: { id: true, usedCount: true },
+    });
+    expect(
+      (await actor.post(`/api/invoices/${row.id}/cancel`).send({})).status,
+    ).toBe(200);
+    const reopened = await actor
+      .post(`/api/invoices/${row.id}/reopen`)
+      .send({});
+    expect(reopened.status).toBe(200);
+    expect(reopened.body.data).toEqual({
+      ...frozen,
+      status: "DRAFT",
+      updatedAt: reopened.body.data.updatedAt,
+    });
+    expect(
+      await db.discount.findMany({
+        where: { id: { in: owned.discounts } },
+        orderBy: { id: "asc" },
+        select: { id: true, usedCount: true },
+      }),
+    ).toEqual(usageBefore);
+    expect(
+      (await actor.post("/api/billing/run").send({ asOfDate: today })).body.data
+        .created,
+    ).toBe(0);
     expect(
       (await actor.post(`/api/invoices/${row.id}/confirm`).send({})).status,
     ).toBe(200);
     expect(
       (
-        await actor
-          .post("/api/payments")
-          .send({
-            invoiceId: row.id,
-            method: "UPI",
-            amount: "500.00",
-            date: today,
-          })
+        await actor.post("/api/payments").send({
+          invoiceId: row.id,
+          method: "UPI",
+          amount: "500.00",
+          date: today,
+        })
       ).status,
     ).toBe(201);
     expect(
@@ -239,14 +263,12 @@ describe.skipIf(!TEST_DB)("merged A/B real HTTP financial flow", () => {
     });
     expect(
       (
-        await actor
-          .post("/api/payments")
-          .send({
-            invoiceId: row.id,
-            method: "BANK_TRANSFER",
-            amount: "1506.00",
-            date: today,
-          })
+        await actor.post("/api/payments").send({
+          invoiceId: row.id,
+          method: "BANK_TRANSFER",
+          amount: "1506.00",
+          date: today,
+        })
       ).status,
     ).toBe(201);
     expect(

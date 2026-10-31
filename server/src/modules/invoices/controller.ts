@@ -11,6 +11,7 @@ const handlers: Record<string, RequestHandler> = {
   'POST /:id/remind': async (req, res) => { res.json({ data: await service.remind(res.locals.validated.params.id, req.user!) }); },
   'GET /:id': async (req, res) => { res.json({ data: await service.get(res.locals.validated.params.id, req.user!) }); },
   'POST /:id/confirm': async (req, res) => { res.json({ data: await service.confirm(res.locals.validated.params.id, req.user!) }); },
+  'POST /:id/reopen': async (req, res) => { res.json({ data: await service.reopen(res.locals.validated.params.id, req.user!) }); },
   'POST /:id/cancel': async (req, res) => { res.json({ data: await service.cancel(res.locals.validated.params.id, req.user!) }); },
   'POST /:id/send': async (req, res) => { res.json({ data: await service.send(res.locals.validated.params.id, req.user!) }); },
 };

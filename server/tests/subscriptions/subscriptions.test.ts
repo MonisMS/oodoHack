@@ -193,9 +193,9 @@ describe.skipIf(!TEST_DB)('templates and subscriptions (A-03)', () => {
       const fixed = await createSub(); await activate(fixed.id);
       expect((await move(fixed.id, 'PAUSED')).body.error.code).toBe('INVALID_TRANSITION');
       const flex = await createSub({ planId: flexPlan.id, lines: [{ productId: product.id, quantity: 1 }] }); await activate(flex.id);
-      expect((await move(flex.id, 'PAUSED')).body.error.code).toBe('BILLING_BACKLOG');
-      await settle(flex.id);
       expect((await move(flex.id, 'PAUSED')).body.data.status).toBe('PAUSED');
+      expect(await db.invoice.count({where:{subscriptionId:flex.id}})).toBe(1);
+      expect(await db.invoice.count({where:{subscriptionId:fixed.id}})).toBe(0);
       expect((await move(flex.id, 'ACTIVE')).body.data.status).toBe('ACTIVE');
     });
 
@@ -203,11 +203,11 @@ describe.skipIf(!TEST_DB)('templates and subscriptions (A-03)', () => {
       const locked = await createSub(); await activate(locked.id);
       expect((await move(locked.id, 'CLOSED')).body.error.code).toBe('INVALID_TRANSITION');
       const early = await createSub({ planId: flexPlan.id, lines: [{ productId: product.id, quantity: 1 }] }); await activate(early.id);
-      await settle(early.id);
       expect((await move(early.id, 'CLOSED')).body.data.status).toBe('CLOSED');
+      expect(await db.invoice.count({where:{subscriptionId:early.id}})).toBe(1);
       const expired = await createSub({ startDate: iso(-600), expiryDate: iso(-300) }); await activate(expired.id);
-      await settle(expired.id, iso(-300));
       expect((await move(expired.id, 'CLOSED', { reason: 'expired' })).body.data.status).toBe('CLOSED');
+      expect(await db.invoice.count({where:{subscriptionId:expired.id}})).toBeGreaterThan(1);
     });
 
     it('renews a closed subscription only if renewable, with a valid renewalExpiryDate, starting a fresh schedule without back-billing closed gaps', async () => {
@@ -250,14 +250,30 @@ describe.skipIf(!TEST_DB)('templates and subscriptions (A-03)', () => {
       expect(edited.body.data.planPrice).toBe('99.00'); // editing a draft re-snapshots the current fee
       await db.plan.update({ where: { id: p.id }, data: { price: '120.00' } });
       await activate(s.id); await settle(s.id); expect((await view(s.id)).planPrice).toBe('99.00');
+      const first=await db.invoice.findFirstOrThrow({where:{subscriptionId:s.id},include:{lines:true}});
+      expect(first.lines.find(l=>l.productId===null)!.unitPrice.toFixed(2)).toBe('99.00');
       expect((await move(s.id, 'CLOSED')).status).toBe(200);
       const renewed = await move(s.id, 'ACTIVE', { renewalExpiryDate: iso(400) });
       expect(renewed.body.data.planPrice).toBe('120.00'); // a new term picks up the current price
+      await settle(s.id,renewed.body.data.nextInvoiceDate);
+      const latest=await db.invoice.findFirstOrThrow({where:{subscriptionId:s.id},orderBy:{periodStart:'desc'},include:{lines:true}});
+      expect(latest.lines.find(l=>l.productId===null)!.unitPrice.toFixed(2)).toBe('120.00');
+      expect((await db.invoice.findUniqueOrThrow({where:{id:first.id},include:{lines:true}})).lines).toEqual(first.lines);
     });
 
-    // Found by these tests: B's planSubscriptionTransition restarts at max(today, last invoice end), which is BEFORE startDate for a
-    // subscription that has not started yet; the database CHECK (nextInvoiceDate >= startDate) then turns resume/renew into a 500.
-    it.todo('resume/renew of a not-yet-started subscription must keep nextInvoiceDate >= startDate (needs a B fix)');
+    // Regression: resume/renew must honor a future start date and the database schedule constraint.
+    it('resumes and renews future subscriptions at startDate without invoicing early', async () => {
+      const id=await live({startDate:iso(10),expiryDate:iso(100)});
+      expect((await move(id,'PAUSED')).status).toBe(200);
+      const resumed=await move(id,'ACTIVE');
+      expect(resumed.status,JSON.stringify(resumed.body)).toBe(200);
+      expect(resumed.body.data).toMatchObject({nextInvoiceDate:iso(10),billingAnchorDay:Number(iso(10).slice(8)),billingAnchorMonth:Number(iso(10).slice(5,7))});
+      expect((await move(id,'CLOSED')).status).toBe(200);
+      const renewed=await move(id,'ACTIVE',{renewalExpiryDate:iso(400)});
+      expect(renewed.status,JSON.stringify(renewed.body)).toBe(200);
+      expect(renewed.body.data.nextInvoiceDate).toBe(iso(10));
+      expect(await db.invoice.count({where:{subscriptionId:id}})).toBe(0);
+    });
 
     it('flags billingDue until billing has run', async () => {
       const id = await live(); expect((await view(id)).billingDue).toBe(true);
@@ -267,12 +283,13 @@ describe.skipIf(!TEST_DB)('templates and subscriptions (A-03)', () => {
 
     it('cancels at period end: expiry moves to the last invoiced day, billing stops, the subscription auto-closes', async () => {
       const id = await live();
-      const early = await schedule(id); expect(early.status).toBe(409); expect(early.body.error.code).toBe('BILLING_BACKLOG'); // due periods must be invoiced first
-      await settle(id);
-      const before = await view(id); const endsOn = dayBefore(before.nextInvoiceDate);
+      const upcoming = await view(id);
+      expect(upcoming.billingDue).toBe(true);
       const r = await schedule(id, { reason: 'customer request' });
       expect(r.status, JSON.stringify(r.body)).toBe(200);
-      expect(r.body.data).toMatchObject({ status: 'ACTIVE', cancelAtPeriodEnd: true, expiryDate: endsOn, nextInvoiceDate: before.nextInvoiceDate });
+      const afterBilling = await view(id);
+      expect(afterBilling.billingDue).toBe(false);
+      expect(r.body.data).toMatchObject({ status: 'ACTIVE', cancelAtPeriodEnd: true, expiryDate: dayBefore(afterBilling.nextInvoiceDate) });
       expect(r.body.data.history.at(-1)).toMatchObject({ fromStatus: 'ACTIVE', toStatus: 'ACTIVE', actorId: staffId });
       expect(r.body.data.history.at(-1).reason).toMatch(/Cancellation scheduled: ends .*customer request/);
       expect((await schedule(id)).status).toBe(409); // already scheduled
@@ -319,9 +336,7 @@ describe.skipIf(!TEST_DB)('templates and subscriptions (A-03)', () => {
 
     it('changes seats from the NEXT invoice only; issued invoices stay frozen', async () => {
       const id = await live();
-      const due = await change(id, [{ productId: product.id, quantity: 5 }]);
-      expect(due.status).toBe(409); expect(due.body.error.code).toBe('BILLING_BACKLOG'); // due periods would be re-priced
-      await settle(id);
+      expect((await view(id)).billingDue).toBe(true);
       const r = await change(id, [{ productId: product.id, variantId: odoo.id, quantity: 5 }], { reason: 'seat increase' });
       expect(r.status, JSON.stringify(r.body)).toBe(200);
       expect(r.body.data.lines).toHaveLength(1); expect(r.body.data.lines[0]).toMatchObject({ quantity: 5, unitPrice: '1560.00' });
@@ -379,6 +394,35 @@ describe.skipIf(!TEST_DB)('templates and subscriptions (A-03)', () => {
       }
       expect((await customerAgent.post('/api/subscriptions').send(body())).status).toBe(403);
       expect((await staff.post('/api/subscriptions').send({ ...body(), status: 'ACTIVE', number: 'HACK' })).status).toBe(422); // strict input: no forged fields
+    });
+  });
+  describe('settlement failures and competing lifecycle actions',()=>{
+    it('does not bill for invalid seat changes or forbidden transitions',async()=>{
+      const s=await createSub();await activate(s.id);
+      expect((await move(s.id,'PAUSED')).status).toBe(409);
+      const invalid=await staff.post(`/api/subscriptions/${s.id}/change-lines`).send({lines:[{productId:product.id,quantity:1}]});
+      expect(invalid.status).toBe(422);
+      expect(await db.invoice.count({where:{subscriptionId:s.id}})).toBe(0);
+      expect(await db.subscriptionLine.count({where:{subscriptionId:s.id}})).toBe(1);
+    });
+    it('keeps lifecycle state unchanged on a billing fault, then succeeds after reconciliation',async()=>{
+      const s=await createSub({planId:flexPlan.id,lines:[{productId:product.id,quantity:1}]});await activate(s.id);
+      await db.subscriptionLine.deleteMany({where:{subscriptionId:s.id}});
+      const failed=await move(s.id,'PAUSED');
+      expect(failed.status).toBe(422);expect(failed.body.error.code).toBe('INVALID_SUBSCRIPTION_LINES');
+      const after=await db.subscription.findUniqueOrThrow({where:{id:s.id},include:{history:true}});
+      expect(after.status).toBe('ACTIVE');expect(after.history).toHaveLength(3);
+      expect(await db.invoice.count({where:{subscriptionId:s.id}})).toBe(0);
+      await db.subscriptionLine.create({data:{subscriptionId:s.id,productId:product.id,description:'Reconciled service',quantity:1,unitPrice:'1000',position:0}});
+      expect((await move(s.id,'PAUSED')).status).toBe(200);
+      expect(await db.invoice.count({where:{subscriptionId:s.id}})).toBe(1);
+    });
+    it('settles competing pauses once and records only one successful pause',async()=>{
+      const s=await createSub({planId:flexPlan.id,lines:[{productId:product.id,quantity:1}]});await activate(s.id);
+      const rs=await Promise.all([move(s.id,'PAUSED'),move(s.id,'PAUSED')]);
+      expect(rs.map(r=>r.status).sort()).toEqual([200,409]);
+      expect(await db.invoice.count({where:{subscriptionId:s.id}})).toBe(1);
+      expect(await db.subscriptionEvent.count({where:{subscriptionId:s.id,toStatus:'PAUSED'}})).toBe(1);
     });
   });
 });

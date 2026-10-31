@@ -313,4 +313,47 @@ describe.skipIf(!TEST_DB)('invoices and payments (A-04)', () => {
       expect((await invoiceOf(inv.id)).status).toBe('CONFIRMED');
     });
   });
+  describe('guarded cancelled-invoice reopen', () => {
+    async function isolated(status='CANCELLED') {
+      const sub=await db.subscription.create({data:{number:`REOPEN/${uid()}`,customerId,planId,status:'CLOSED',startDate:new Date('2026-01-01'),nextInvoiceDate:new Date('2026-03-01'),billingAnchorDay:1,billingAnchorMonth:1}});
+      const invoice=await makeInvoice({status});
+      return db.invoice.update({where:{id:invoice.id},data:{subscriptionId:sub.id,periodStart:new Date('2026-01-01'),periodEnd:new Date('2026-02-01')}});
+    }
+    const reopen=(id:string)=>staff.post(`/api/invoices/${id}/reopen`).send({});
+    it('requires staff/admin, valid identity and a cancelled invoice',async()=>{
+      const inv=await isolated();
+      expect((await customerAgent.post(`/api/invoices/${inv.id}/reopen`).send({})).status).toBe(403);
+      expect((await request(app).post(`/api/invoices/${inv.id}/reopen`).send({})).status).toBe(401);
+      expect((await reopen(crypto.randomUUID())).status).toBe(404);
+      expect((await reopen('invalid')).status).toBe(422);
+      expect((await reopen((await isolated('CONFIRMED')).id)).status).toBe(409);
+    });
+    it('allows exactly one concurrent reopen of the same cancelled invoice',async()=>{
+      const inv=await isolated();
+      const responses=await Promise.all([reopen(inv.id),reopen(inv.id)]);
+      expect(responses.map(r=>r.status).sort()).toEqual([200,409]);
+      expect((await invoiceOf(inv.id)).status).toBe('DRAFT');
+    });
+    it('prevents two overlapping cancelled invoices from becoming collectible together',async()=>{
+      const a=await isolated();const second=await makeInvoice({status:'CANCELLED'});
+      const b=await db.invoice.update({where:{id:second.id},data:{subscriptionId:a.subscriptionId,periodStart:new Date('2026-01-15'),periodEnd:new Date('2026-02-15')}});
+      const responses=await Promise.all([reopen(a.id),reopen(b.id)]);
+      expect(responses.map(r=>r.status).sort()).toEqual([200,409]);
+      expect(await db.invoice.count({where:{subscriptionId:a.subscriptionId,status:'DRAFT'}})).toBe(1);
+    });
+    it('allows adjacent coverage but refuses any overlapping live period',async()=>{
+      const inv=await isolated();const live=await makeInvoice();
+      await db.invoice.update({where:{id:live.id},data:{subscriptionId:inv.subscriptionId,periodStart:new Date('2026-02-01'),periodEnd:new Date('2026-03-01')}});
+      expect((await reopen(inv.id)).status).toBe(200);
+      await staff.post(`/api/invoices/${inv.id}/cancel`).send({});
+      await db.invoice.update({where:{id:live.id},data:{periodStart:new Date('2026-01-31')}});
+      expect((await reopen(inv.id)).status).toBe(409);
+    });
+    it('rejects a cancelled invoice with payment records, even if its cached collected amount is zero',async()=>{
+      const inv=await isolated();
+      await db.payment.create({data:{invoiceId:inv.id,amount:'1.00',method:'UPI',date:new Date(iso(0)),recordedById:staffId}});
+      expect((await reopen(inv.id)).status).toBe(409);
+      expect((await invoiceOf(inv.id)).status).toBe('CANCELLED');
+    });
+  });
 });

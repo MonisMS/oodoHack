@@ -1,6 +1,6 @@
 # Monis (B) — implementation and integration handoff
 
-Completed and verified on 31 October 2026. Before final integration, main was fetched and fast-forwarded to teammate commit `e6e43f0`. The latest authentication, subscription, invoice/payment and security services were preserved and integrated with B's financial policy. Publication follows the user's explicit commit/push request.
+Completed and verified on 31 October 2026. Before final integration, main was fetched and fast-forwarded to teammate merge `d9f4718` (A-10/A-11). The latest authentication, subscription, invoice/payment and security services were preserved and integrated with B's financial policy. Publication follows the user's explicit commit/push request.
 
 ## Delivered behavior
 
@@ -33,7 +33,7 @@ All pure exports are available from `server/src/lib/domain/index.ts`; individual
 | domain/discount.ts | DiscountRule, findApplicableDiscounts, eligibleForBasis, discountSaving |
 | domain/invoice-draft.ts | buildInvoiceDraft; charge/rate/draft/snapshot interfaces |
 | domain/states.ts | allowedTransitions, canTransition, per-entity variants, assertSubscriptionTransition, planSubscriptionTransition |
-| billing-engine/service.ts | runBilling; createBillingService for isolated clients and configurable run limits |
+| billing-engine/service.ts | runBilling, billSubscription; createBillingService for isolated clients and configurable run limits |
 | billing-engine/retry.ts | nested Prisma/pg conflict classification and bounded whole-transaction retry |
 | jobs/billing.ts | runBillingCycle, startBillingScheduler; importing does not start a timer |
 
@@ -50,7 +50,8 @@ const coverage = await tx.invoice.aggregate({
   _max: { periodEnd: true },
 });
 const change = planSubscriptionTransition(sub.status, input.to, {
-  today: dateOnly(new Date()),
+  today: todayBusiness(),
+  startDate: dateOnly(sub.startDate),
   expiryDate: sub.expiryDate ? dateOnly(sub.expiryDate) : null,
   renewalExpiryDate: input.renewalExpiryDate,
   plan: sub.plan,
@@ -65,9 +66,9 @@ const change = planSubscriptionTransition(sub.status, input.to, {
 // plus the from/to/actor history event, using this same tx.
 ```
 
-The coverage lookup considers generated invoice periods, including unpaid drafts, because their period keys are already reserved and they must not be billed twice. Cancelling an invoice does not automatically reissue it or refund discount usage. If cancellation/rebilling semantics change, A/B must design that explicitly.
+The coverage lookup considers generated invoice periods, including unpaid drafts, because their period keys are already reserved and they must not be billed twice. Cancelling retains its period key and discount usage. POST /api/invoices/:id/reopen now restores the same frozen invoice after zero-money/no-payment and overlap checks. It does not recalculate amounts or refund/redeem usage; see docs/B_FOLLOWUPS_RESOLVED.md.
 
-Before ACTIVE→PAUSED/CLOSED, the planner returns **409 BILLING_BACKLOG** if active service has due unbilled periods. Run billing first and retry the transition. This guard concerns **unbilled periods**, not whether an already-issued invoice is paid; unpaid issued invoices remain collectible. On resume/renew, nextInvoiceDate is `max(today, latest generated periodEnd)`, with day/month anchors reset to that date.
+Before ACTIVE→PAUSED/CLOSED, the planner returns **409 BILLING_BACKLOG** if active service has due unbilled periods. The lifecycle service catches this validation result, settles only this subscription outside the lifecycle transaction, then locks and revalidates the requested action. This guard concerns **unbilled periods**, not whether an already-issued invoice is paid; unpaid issued invoices remain collectible. On resume/renew, nextInvoiceDate is `max(today, startDate, latest generated periodEnd)`, with day/month anchors reset to that date.
 
 The engine also blocks stale/overlapping resume cursors with SCHEDULE_RECONCILIATION_REQUIRED. It will not auto-close an incorrectly paused record if history exposes unpaid-for active service before the pause. These guards make integration mistakes visible instead of silently creating wrong charges or deleting debt. Domain errors map through the shared error envelope; invalid transitions/backlog/reconciliation return 409.
 
@@ -80,15 +81,15 @@ The engine also blocks stale/overlapping resume cursors with SCHEDULE_RECONCILIA
 - Cron has a maximum of 10 batches and a 30-second soft cycle budget; a currently running service/transaction can extend that soft budget. It stops on no progress and logs safe result metadata.
 - Keep `BILLING_CRON_ENABLED=false` until the intended local database is migrated/configured. Set it true to start the already-wired scheduler; `BILLING_CRON` defaults to `0 0 * * *` in UTC (05:30 IST). Manual runs use the same financial engine.
 - Scheduler shutdown waits for the active cycle before Prisma disconnects. No emails, HTTP gateway calls or irreversible external effects occur inside retryable billing transactions.
-- Current configured rates/plan fees are captured when creating a new invoice. Existing subscription unit prices and generated invoice snapshots stay frozen. This implementation does not reconstruct historical effective-dated tax/plan versions, add GST registration/place-of-supply models or implement bank AutoPay.
+- Current configured tax rates and the locked sub.planPrice (legacy null falls back to the plan fee) are captured when creating a new invoice. Existing subscription unit prices and generated invoice snapshots stay frozen. This implementation does not reconstruct historical effective-dated tax/plan versions, add GST registration/place-of-supply models or implement bank AutoPay.
 - The current schema does not persist per-line discount allocations on untaxed lines; the pure result exposes them, and taxed lines freeze them inside their tax snapshots. If later reporting needs a normalized audit of all line allocations, A should add an explicit model/column rather than infer current rules.
 
 ## Verification performed
 
 | Check | Actual result |
 |---|---|
-| Existing migrations | Both foundation and Better Auth migrations applied successfully to isolated local PostgreSQL 18.6 |
-| Full tests, with all DB suites enabled | **150 passed, 0 skipped** across 18 files, including 16 PostgreSQL billing scenarios, teammate auth/subscription/invoice/security tests and the complete A/B HTTP financial flow |
+| Existing migrations | All three foundation, Better Auth and A-11 lifecycle migrations applied successfully to isolated local PostgreSQL 18.6 |
+| Full tests, with all DB suites enabled | **196 passed, 0 skipped/todo** across 19 files, including 21 PostgreSQL billing scenarios, teammate auth/subscription/invoice/security tests, reopen overlap races and the complete A/B HTTP financial flow |
 | TypeScript | Client + server + tests passed |
 | Production build | Server TS output and Vite bundle passed |
 | Prisma schema validation | Passed; no schema change in this workstream |

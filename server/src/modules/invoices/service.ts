@@ -97,6 +97,27 @@ export const confirm = (id: string, actor: Principal) => transition(id, 'CONFIRM
 // Cancelling keeps discount usage history; usage is not refunded in v1.
 export const cancel = (id: string, actor: Principal) => transition(id, 'CANCELLED', actor);
 
+/** Restore the same immutable financial document; no recalculation, numbering or discount redemption.
+ * Lock order matches billing: subscription first. This also serializes two overlapping reopen requests.
+ */
+export async function reopen(id: string, actor: Principal) {
+  await db.$transaction(async tx => {
+    const target = await tx.invoice.findUnique({ where: { id }, select: { subscriptionId: true } });
+    if (!target) throw new AppError(404, 'NOT_FOUND', 'Invoice not found');
+    await lockRow(tx, 'Subscription', target.subscriptionId, 'Subscription not found');
+    await lockRow(tx, 'Invoice', id, 'Invoice not found');
+    const invoice = await tx.invoice.findUniqueOrThrow({ where: { id }, select: { status: true, amountPaid: true, periodStart: true, periodEnd: true, _count: { select: { payments: true } } } });
+    const overlap = await tx.invoice.findFirst({ where: {
+      subscriptionId: target.subscriptionId, id: { not: id }, status: { not: 'CANCELLED' },
+      periodStart: { lt: invoice.periodEnd }, periodEnd: { gt: invoice.periodStart },
+    }, select: { id: true } });
+    const check = canTransitionInvoice(invoice.status, 'DRAFT', { paymentCount: invoice._count.payments, periodUncovered: overlap === null });
+    if (!check.ok || !invoice.amountPaid.isZero()) throw new AppError(409, 'INVALID_TRANSITION', check.ok ? 'An invoice with collected money cannot be reopened' : check.reason);
+    await tx.invoice.update({ where: { id }, data: { status: 'DRAFT' } });
+  });
+  return get(id, actor);
+}
+
 /** Emails the invoice built from its frozen values; sentAt is only set after the transport succeeds. */
 export async function send(id: string, actor: Principal) {
   const invoice = await db.invoice.findUnique({ where: { id }, include: invoiceInclude });
