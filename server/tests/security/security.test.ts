@@ -141,6 +141,7 @@ describe.skipIf(!TEST_DB)('security review (A-06)', () => {
     it('keeps amountPaid equal to the sum of recorded payments for every invoice that has payments', async () => {
       const bad = await db.$queryRaw<Array<{ number: string }>>`
         SELECT i.number FROM "Invoice" i JOIN "Payment" p ON p."invoiceId" = i.id
+        WHERE i.status <> 'CANCELLED' -- other suites insert a payment row on a cancelled invoice on purpose, to prove reopen refuses it
         GROUP BY i.id HAVING i."amountPaid" <> SUM(p.amount)
            OR (i.status = 'PAID') <> (SUM(p.amount) >= i.total)
            OR i.status NOT IN ('PAID', 'PARTIALLY_PAID')`;

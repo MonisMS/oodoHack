@@ -36,7 +36,7 @@ describe.skipIf(!TEST_DB)('Better Auth integration', () => {
     const row = await db.user.findUniqueOrThrow({ where: { email } });
     expect(row.role).toBe('CUSTOMER'); expect(row.isActive).toBe(true);
     // authenticated: passes requireAuth/requireRole and reaches the (still unimplemented) handler
-    expect((await agent.get('/api/portal/invoices')).status).toBe(501);
+    expect((await agent.get('/api/portal/summary')).status).toBe(200);
     // staff-only route is forbidden for a customer
     expect((await agent.get('/api/subscriptions')).status).toBe(403);
     expect((await request(app).get('/api/portal/invoices')).status).toBe(401);
@@ -91,7 +91,7 @@ describe.skipIf(!TEST_DB)('Better Auth integration', () => {
   it('blocks deactivated users from signing in and from using an existing session', async () => {
     const email = unique('inactive'); const agent = request.agent(app);
     await signUp(agent, { name: 'Ina Ctive', email, password: GOOD });
-    expect((await agent.get('/api/portal/invoices')).status).toBe(501);
+    expect((await agent.get('/api/portal/summary')).status).toBe(200);
     await db.user.update({ where: { email }, data: { isActive: false } });
     expect((await agent.get('/api/portal/invoices')).status).toBe(401);
     expect((await signIn(request.agent(app), email, GOOD)).status).toBeGreaterThanOrEqual(400);

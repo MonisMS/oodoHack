@@ -47,19 +47,23 @@ export interface DiscountUsage { id: Id; discountId: Id; invoiceId: Id; amount: 
 export interface LineInput { productId: Id; variantId?: Id | null; quantity: number; unitPrice?: Money }
 export interface TemplateInput { name: string; planId: Id; validityDays: number; isActive?: boolean; lines: LineInput[] }
 export interface TemplateLine extends Omit<LineInput, 'variantId' | 'unitPrice'> { id: Id; templateId: Id; variantId: Id | null; unitPrice: Money | null; position: number }
-export interface QuotationTemplate extends Omit<Required<TemplateInput>, 'lines'> { id: Id; lines: TemplateLine[]; createdAt: Timestamp; updatedAt: Timestamp }
+export interface QuotationTemplate extends Omit<Required<TemplateInput>, 'lines'> { id: Id; planName: string; lines: TemplateLine[]; createdAt: Timestamp; updatedAt: Timestamp }
 export interface SubscriptionInput { customerId: Id; planId: Id; startDate: DateOnly; expiryDate?: DateOnly | null; paymentTermsDays: number; notes?: string | null; lines: LineInput[] }
 export interface FromTemplateInput { templateId: Id; customerId: Id; startDate: DateOnly; paymentTermsDays: number; notes?: string | null }
 export interface SubscriptionLine { id: Id; subscriptionId: Id; productId: Id; variantId: Id | null; description: string; quantity: number; unitPrice: Money; position: number }
 export interface SubscriptionEvent { id: Id; subscriptionId: Id; fromStatus: SubscriptionStatus; toStatus: SubscriptionStatus; actorId: Id | null; reason: string | null; createdAt: Timestamp }
-export interface Subscription extends Omit<SubscriptionInput, 'expiryDate' | 'notes' | 'lines'> { id: Id; number: string; templateId: Id | null; status: SubscriptionStatus; expiryDate: DateOnly | null; nextInvoiceDate: DateOnly; billingAnchorDay: number; billingAnchorMonth: number; notes: string | null; lines: SubscriptionLine[]; history: SubscriptionEvent[]; allowedTransitions: SubscriptionStatus[]; planPrice: Money | null; cancelAtPeriodEnd: boolean; billingDue: boolean; createdAt: Timestamp; updatedAt: Timestamp }
+export interface Subscription extends Omit<SubscriptionInput, 'expiryDate' | 'notes' | 'lines'> { id: Id; number: string; customerName: string; customerEmail: string; planName: string; planBillingPeriod: BillingPeriod; templateId: Id | null; status: SubscriptionStatus; expiryDate: DateOnly | null; nextInvoiceDate: DateOnly; billingAnchorDay: number; billingAnchorMonth: number; notes: string | null; lines: SubscriptionLine[]; history: SubscriptionEvent[]; allowedTransitions: SubscriptionStatus[]; planPrice: Money | null; cancelAtPeriodEnd: boolean; billingDue: boolean; createdAt: Timestamp; updatedAt: Timestamp }
 export interface TransitionInput { to: SubscriptionStatus; reason?: string; renewalExpiryDate?: DateOnly }
 export interface TaxSnapshot { taxId: Id; name: string; percentage: string; amount: Money; taxableBase?: Money; grossBase?: Money; discountAmount?: Money; discounts?: { discountId: Id; amount: Money }[] }
 export interface InvoiceLine { id: Id; invoiceId: Id; kind: 'CHARGE' | 'DISCOUNT'; productId: Id | null; variantId: Id | null; discountId: Id | null; description: string; quantity: number; unitPrice: Money; subtotal: Money; taxTotal: Money; total: Money; taxes: TaxSnapshot[]; position: number }
 export interface Invoice { id: Id; number: string; subscriptionId: Id; customerId: Id; status: InvoiceStatus; periodStart: DateOnly; periodEnd: DateOnly; issueDate: DateOnly; dueDate: DateOnly; customerName: string; customerEmail: string; subtotal: Money; discountTotal: Money; taxTotal: Money; total: Money; amountPaid: Money; outstanding: Money; overdue: boolean; currency: 'INR'; sentAt: Timestamp | null; lastReminderAt: Timestamp | null; reminderCount: number; lines: InvoiceLine[]; payments: Payment[]; discountUsages: DiscountUsage[]; createdAt: Timestamp; updatedAt: Timestamp }
 export interface PaymentInput { invoiceId: Id; method: PaymentMethod; amount: Money; date: DateOnly; note?: string | null }
-export interface Payment extends Required<PaymentInput> { id: Id; recordedById: Id; createdAt: Timestamp }
+export interface Payment extends Required<PaymentInput> { id: Id; invoiceNumber: string | null; customerName: string | null; recordedById: Id; createdAt: Timestamp }
 export interface BillingInput { asOfDate: DateOnly; maxPeriodsPerSubscription?: number }
 export interface BillingResult { created: number; skipped: number; failed: number; autoClosed: number; hasMore: boolean; failures: { subscriptionId: Id; code: string; message: string }[] }
 export interface ReportSummary { activeSubscriptions: number; revenueCollected: Money; outstanding: Money; overdueCount: number; overdueAmount: Money; revenueByMonth: { month: string; amount: Money }[] }
-export interface PortalSummary { activeSubscriptions: number; outstanding: Money; nextInvoiceDate: DateOnly | null }
+export interface PortalSummary { activeSubscriptions: number; outstanding: Money; overdueInvoices: number; nextInvoiceDate: DateOnly | null }
+// The portal hides staff-only details: no notes, no who/why in history, no payment recorder or note, no dunning history.
+export interface PortalSubscription extends Subscription { canScheduleCancellation: boolean; canWithdrawCancellation: boolean }
+export type PortalPayment = Omit<Payment, 'recordedById' | 'note' | 'customerName'>;
+export interface PortalInvoice extends Omit<Invoice, 'payments'> { payments: PortalPayment[] }

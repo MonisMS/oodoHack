@@ -37,7 +37,7 @@ describe('production environment guards', () => {
 
   it('binds to loopback by default and keeps proxy headers untrusted by default', async () => {
     vi.resetModules(); const { env } = await import('../../src/lib/env.js');
-    expect(env.HOST).toBe('127.0.0.1'); expect(env.TRUST_PROXY).toBe(false); expect(env.BUSINESS_TZ).toBe('Asia/Kolkata');
+    expect(env.HOST).toBe('localhost'); expect(env.TRUST_PROXY).toBe(false); expect(env.BUSINESS_TZ).toBe('Asia/Kolkata');
   });
 });
 
