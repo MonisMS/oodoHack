@@ -1,1 +1,1 @@
-export { StatusBadge } from './kit';
+export { StatusBadge } from "./kit";

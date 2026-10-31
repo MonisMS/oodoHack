@@ -1,3 +1,29 @@
-import { api,queryString } from '../../lib/api';
-import type { Data,ListQuery,Page,StaffInput,User,UserUpdateInput } from '../../types/api';
-export const usersApi={customers:(q:ListQuery,signal?:AbortSignal)=>api<Page<User>>('/users/customers'+queryString(q),{signal}),staff:(q:ListQuery,signal?:AbortSignal)=>api<Page<User>>('/users/staff'+queryString(q),{signal}),createStaff:async(input:StaffInput)=>(await api<Data<User>>('/users/staff',{method:'POST',body:JSON.stringify(input)})).data,update:async(id:string,input:UserUpdateInput)=>(await api<Data<User>>('/users/'+id,{method:'PUT',body:JSON.stringify(input)})).data};
+import { api, queryString } from "../../lib/api";
+import type {
+  Data,
+  ListQuery,
+  Page,
+  StaffInput,
+  User,
+  UserUpdateInput,
+} from "../../types/api";
+export const usersApi = {
+  customers: (q: ListQuery, signal?: AbortSignal) =>
+    api<Page<User>>("/users/customers" + queryString(q), { signal }),
+  staff: (q: ListQuery, signal?: AbortSignal) =>
+    api<Page<User>>("/users/staff" + queryString(q), { signal }),
+  createStaff: async (input: StaffInput) =>
+    (
+      await api<Data<User>>("/users/staff", {
+        method: "POST",
+        body: JSON.stringify(input),
+      })
+    ).data,
+  update: async (id: string, input: UserUpdateInput) =>
+    (
+      await api<Data<User>>("/users/" + id, {
+        method: "PUT",
+        body: JSON.stringify(input),
+      })
+    ).data,
+};

@@ -1,1 +1,1 @@
-export { Modal } from './kit';
+export { Modal } from "./kit";
