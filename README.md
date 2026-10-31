@@ -1,6 +1,6 @@
 # Brightloop Software — Subscription Management
 
-Foundation for a four-person hackathon team. React + Vite + TypeScript + Tailwind + React Router + TanStack Query + Recharts; Express + TypeScript + Zod + JWT/bcrypt; local PostgreSQL + Prisma. `/client` and `/server` are npm workspaces. The alternate Next.js/Neon team plan was not applied: this deliverable follows the requested foundation-only scope and fixed stack.
+Foundation for a four-person hackathon team. React + Vite + TypeScript + Tailwind + React Router + TanStack Query + Recharts; Express + TypeScript + Zod + Better Auth (cookie sessions); local PostgreSQL + Prisma. `/client` and `/server` are npm workspaces. The alternate Next.js/Neon team plan was not applied: this deliverable follows the requested foundation-only scope and fixed stack.
 
 ## What works now
 
@@ -44,7 +44,7 @@ npm run dev
 
 Web: http://localhost:5173. API health: http://localhost:4000/api/health. Vite proxies `/api` to Express; production needs an equivalent same-origin reverse proxy. Seed is intentionally a no-write stub until D implements it, so no demo logins exist yet. Migrations do not run automatically at startup. For an already-provisioned database without shadow permissions use `npm run db:deploy` to apply committed migrations. Never use reset/push against a teammate's database.
 
-`server/.env` is loaded relative to the server workspace by dotenv; npm workspace scripts set that directory. Frontend env values are public: never put JWT_SECRET, SMTP credentials or DATABASE_URL in client env. API environment variables are listed in root .env.example. Client `.env.example` provides VITE_API_BASE_URL and explicit development-auth flag. Default JWT strategy is Bearer; A owns verification of signature, expiry and active user; C owns the public auth forms. Development headers are a temporary opt-in and are rejected if NODE_ENV=production. Keep the API on a trusted local machine until A finishes real auth. The shell's dev identity UUID is only an identity fixture, not a seeded DB user; replace/select a real seed user for business operations.
+`server/.env` is loaded relative to the server workspace by dotenv; npm workspace scripts set that directory. Frontend env values are public: never put BETTER_AUTH_SECRET, SMTP credentials or DATABASE_URL in client env. API environment variables are listed in root .env.example. Client `.env.example` provides VITE_API_BASE_URL and explicit development-auth flag. Auth is Better Auth with an httpOnly session cookie (same-origin via the Vite proxy); A owns the server session, role and active-user checks and `client/src/lib/session.tsx`; C owns the public auth forms and calls `useSession()` (signIn/signUp/signOut/requestReset/resetPassword). Development headers are a temporary opt-in and are rejected if NODE_ENV=production. Keep the API on a trusted local machine until A finishes real auth. The shell's dev identity UUID is only an identity fixture, not a seeded DB user; replace/select a real seed user for business operations.
 
 ## Commands
 

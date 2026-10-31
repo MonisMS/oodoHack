@@ -123,4 +123,49 @@ describe.skipIf(!TEST_DB)('Better Auth integration', () => {
     expect(r.status).toBeGreaterThanOrEqual(400);
     sent.mockRestore();
   });
+
+  describe('users module (staff + customers)', () => {
+    let admin: Agent; let staff: Agent; let customer: Agent; const staffEmail = unique('newstaff');
+    beforeAll(async () => {
+      const adminEmail = unique('admin'); await createCredentialUser({ name: 'Ada Admin', email: adminEmail, password: GOOD, role: 'ADMIN' });
+      admin = request.agent(app); await signIn(admin, adminEmail, GOOD);
+      const s = unique('st'); await createCredentialUser({ name: 'Stan Staff', email: s, password: GOOD, role: 'STAFF' });
+      staff = request.agent(app); await signIn(staff, s, GOOD);
+      customer = request.agent(app); await signUp(customer, { name: 'Cy Customer', email: unique('cy'), password: GOOD });
+    });
+
+    it('ADMIN creates STAFF who can then sign in; the response never leaks credentials', async () => {
+      const r = await admin.post('/api/users/staff').send({ name: 'New Staff', email: staffEmail.toUpperCase(), password: GOOD });
+      expect(r.status).toBe(201);
+      expect(r.body.data).toMatchObject({ name: 'New Staff', email: staffEmail, role: 'STAFF', isActive: true });
+      expect(JSON.stringify(r.body)).not.toMatch(/password|hash|token/i);
+      expect((await signIn(request.agent(app), staffEmail, GOOD)).status).toBe(200);
+    });
+
+    it('rejects duplicate staff email (409) and weak passwords (422)', async () => {
+      expect((await admin.post('/api/users/staff').send({ name: 'Dup', email: staffEmail, password: GOOD })).status).toBe(409);
+      const weak = await admin.post('/api/users/staff').send({ name: 'Weak', email: unique('weakstaff'), password: 'weakpass' });
+      expect(weak.status).toBe(422); expect(weak.body.error.fields.password).toBeDefined();
+    });
+
+    it('only ADMIN may create or list staff', async () => {
+      const body = { name: 'X', email: unique('x'), password: GOOD };
+      expect((await staff.post('/api/users/staff').send(body)).status).toBe(403);
+      expect((await customer.post('/api/users/staff').send(body)).status).toBe(403);
+      expect((await request(app).post('/api/users/staff').send(body)).status).toBe(401);
+      expect((await staff.get('/api/users/staff')).status).toBe(403);
+      const list = await admin.get('/api/users/staff?search=newstaff');
+      expect(list.status).toBe(200); expect(list.body.data.map((u: { email: string }) => u.email)).toContain(staffEmail);
+    });
+
+    it('ADMIN and STAFF list customers with pagination; customers cannot', async () => {
+      const r = await staff.get('/api/users/customers?pageSize=1');
+      expect(r.status).toBe(200); expect(r.body).toMatchObject({ page: 1, pageSize: 1 });
+      expect(r.body.data.length).toBeLessThanOrEqual(1); expect(r.body.total).toBeGreaterThan(0);
+      expect(r.body.data.every((u: { role: string }) => u.role === 'CUSTOMER')).toBe(true);
+      expect((await admin.get('/api/users/customers?search=cy.')).status).toBe(200);
+      expect((await customer.get('/api/users/customers')).status).toBe(403);
+      expect((await admin.get('/api/users/customers?pageSize=1000')).status).toBe(422);
+    });
+  });
 });
