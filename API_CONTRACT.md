@@ -5,7 +5,7 @@ Contract editor: Lead (A), with Monis (B) retaining financial/domain decision au
 ## Transport and access
 
 - Base `/api`; JSON request/response; no trailing slash required. IDs are UUIDs. Dates are UTC calendar `YYYY-MM-DD`; timestamps are ISO 8601 UTC. One currency, INR. Money uses major-unit decimal strings with exactly two digits (`"560.00"`), never JSON floats; percentage strings have up to four decimal places. Internally calculate in integer paise or exact Decimal, round half up per line, and check numeric bounds before saving.
-- A implements JWT Bearer auth (`Authorization: Bearer <token>`), 8-hour expiry, with database active-user lookup on protected requests. Signup always creates CUSTOMER; ADMIN alone creates STAFF. Password >8 characters, uppercase, lowercase, non-whitespace special, at most 72 UTF-8 bytes for bcrypt. Normalize email to lowercase/trim before lookup/write. Logout discards the stateless token on the client; no refresh token or immediate token revocation in v1.
+- **Auth = Better Auth (cookie sessions), replaces the earlier JWT/bcrypt design.** Session cookie `better-auth.session_token`, 8-hour expiry, same-origin via the Vite `/api` proxy; client fetches use `credentials: 'include'`. `requireAuth` reads the session and rejects deactivated users (`User.isActive=false`) on every request. Signup always creates an active CUSTOMER (`role`/`isActive` are server-owned, client input is ignored); only ADMIN creates STAFF, through the server helper `createCredentialUser` (also used by the seed so seeded logins hash like real ones). Password policy (>8 chars, upper, lower, special, max 72) is enforced by a server hook on signup, reset and change. Email is lowercased by Better Auth. Logout deletes the server session. Passwords are scrypt-hashed in `Account.password` (providerId `credential`).
 - Until A replaces `server/src/middleware/auth.ts`, dev auth requires `DEV_AUTH_ENABLED=true`, UUID `x-dev-user-id` and enum `x-dev-role`. It is refused in production, provides no real authentication, and must only run on a trusted development machine. Both `requireAuth` and `requireRole(...roles)` retain their signatures and set `req.user: {id, role}`.
 - Roles in the endpoint table are exhaustive. No implicit ADMIN override for CUSTOMER-only portal routes. Portal services derive customerId only from the principal and apply it in EVERY list/detail query. A missing or foreign-owned portal record returns 404. No customer filter is accepted on portal queries.
 - List response is `{data: T[], page: number, pageSize: number, total: number}`. Other JSON success responses use `{data: T}`. DELETE/logout return 204 with no body. PUT is complete replacement of writable fields, not PATCH. Omitted optional fields receive the documented Zod defaults. Relations and immutable server-managed values never come from request bodies.
@@ -19,12 +19,12 @@ All request shapes are named Zod schemas reproduced below. `—` means no body/q
 | Method | Path | Roles | Body | Query | Params | Success |
 |---|---|---|---|---|---|---|
 | GET | /api/health | public | — | — | — | 200 Data<{status:"ok",scope:"foundation"}> |
-| POST | /api/auth/signup | public | signupInput | — | — | 201 Data<AuthSession> |
-| POST | /api/auth/login | public | loginInput | — | — | 200 Data<AuthSession> |
-| POST | /api/auth/logout | ADMIN, STAFF, CUSTOMER | — | — | — | 204 empty |
-| GET | /api/auth/me | ADMIN, STAFF, CUSTOMER | — | — | — | 200 Data<User> |
-| POST | /api/auth/forgot-password | public | forgotPasswordInput | — | — | 200 Data<Message> |
-| POST | /api/auth/reset-password | public | resetPasswordInput | — | — | 200 Data<Message> |
+| POST | /api/auth/sign-up/email | public | `{name,email,password}` | — | — | 200 `{token,user}` + session cookie (Better Auth) |
+| POST | /api/auth/sign-in/email | public | `{email,password}` | — | — | 200 + session cookie; 401 on bad credentials |
+| POST | /api/auth/sign-out | any signed-in | — | — | — | 200, session deleted |
+| GET | /api/auth/get-session | public | — | — | — | 200 `{session,user:{id,name,email,role,isActive}}` or `null` |
+| POST | /api/auth/request-password-reset | public | `{email,redirectTo}` | — | — | 200 neutral message, identical for unknown emails; link = `<redirectTo>?token=…` |
+| POST | /api/auth/reset-password | public | `{token,newPassword}` | — | — | 200; token one-time, 30 min, revokes other sessions |
 | GET | /api/users/customers | ADMIN, STAFF | — | customerQuery | — | 200 Page<User> |
 | GET | /api/users/staff | ADMIN | — | listQuery | — | 200 Page<User> |
 | POST | /api/users/staff | ADMIN | staffInput | — | — | 201 Data<User> |
@@ -127,7 +127,7 @@ Reports: all filters are combined. Subscription count uses current subscription 
 
 ### Auth/reset details
 
-Reset: generate cryptographically random token, store SHA-256 hash only, 30-minute expiry, one-time atomic consumption with password update. Never put the raw reset token in a JSON response. Development email delivery may log the reset link. Delete/mark older unused reset tokens on a new request. C implements the auth forms and mirrored client validation; A owns authentication/reset persistence and session security. Apply login/reset rate limiting before demo deployment as SHOULD, avoiding auth feature expansion in the foundation.
+Reset (Better Auth): `sendResetPassword` calls `resetMailer.send` in `server/src/lib/auth.ts` (D-02 swaps the dev console log for SMTP and must fail the request in production). Token lives in `Verification`, expires in 30 minutes, is single use, and a successful reset revokes all sessions. Unknown emails get the same neutral response. Frontend reset page reads `?token=` and calls `reset-password`. Rate limiting is Better Auth's built-in production limiter.
 
 ## Server service boundaries (target exports; not implemented in foundation)
 

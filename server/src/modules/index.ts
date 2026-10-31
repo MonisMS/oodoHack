@@ -1,5 +1,4 @@
 import type { Express } from 'express';
-import module0 from './auth/routes.js';
 import module1 from './users/routes.js';
 import module2 from './products/routes.js';
 import module3 from './plans/routes.js';
@@ -13,7 +12,6 @@ import module10 from './payments/routes.js';
 import module11 from './reports/routes.js';
 import module12 from './portal/routes.js';
 export function registerModules(app: Express) {
-  app.use('/api/auth', module0);
   app.use('/api/users', module1);
   app.use('/api/products', module2);
   app.use('/api/plans', module3);
