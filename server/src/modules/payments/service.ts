@@ -11,8 +11,9 @@ type Query = z.infer<typeof paymentQuery>;
 type Input = z.infer<typeof paymentInput>;
 
 // Wire shape of the contract's Payment.
-export function toPaymentDto(p: PaymentRow) {
-  return { id: p.id, invoiceId: p.invoiceId, method: p.method, amount: p.amount.toFixed(2), date: dateOnly(p.date), note: p.note, recordedById: p.recordedById, createdAt: p.createdAt.toISOString() };
+export function toPaymentDto(p: PaymentRow, invoice?: { number: string; customerName: string } | null) {
+  const owner = invoice ?? (p as PaymentRow & { invoice?: { number: string; customerName: string } }).invoice;
+  return { id: p.id, invoiceId: p.invoiceId, invoiceNumber: owner?.number ?? null, customerName: owner?.customerName ?? null, method: p.method, amount: p.amount.toFixed(2), date: dateOnly(p.date), note: p.note, recordedById: p.recordedById, createdAt: p.createdAt.toISOString() };
 }
 
 export async function list(q: Query, _actor: Principal) {
@@ -28,10 +29,10 @@ export async function list(q: Query, _actor: Principal) {
   const dir = q.sortOrder;
   const orderBy: Prisma.PaymentOrderByWithRelationInput = q.sortBy === 'date' ? { date: dir } : { createdAt: dir };
   const [rows, total] = await Promise.all([
-    db.payment.findMany({ where, orderBy: [orderBy, { id: 'asc' }], skip: (q.page - 1) * q.pageSize, take: q.pageSize }),
+    db.payment.findMany({ where, include: { invoice: { select: { number: true, customerName: true } } }, orderBy: [orderBy, { id: 'asc' }], skip: (q.page - 1) * q.pageSize, take: q.pageSize }),
     db.payment.count({ where }),
   ]);
-  return { data: rows.map(toPaymentDto), page: q.page, pageSize: q.pageSize, total };
+  return { data: rows.map(r => toPaymentDto(r)), page: q.page, pageSize: q.pageSize, total };
 }
 
 /**

@@ -1,17 +1,11 @@
-import { env } from '../../lib/env.js';
+import { escapeHtml, sendEmail, type OutgoingEmail } from '../../lib/email.js';
 
-// Transport + fallback renderer for invoice email. D-02 supplies the real SMTP sender and HTML renderer;
-// until then this keeps `send` honest: dev logs the message, production fails instead of pretending it was sent.
-export interface OutgoingEmail { to: string; subject: string; html: string }
-
+// Invoice and reminder emails. Transport is the shared sender (lib/email.ts): real SMTP when configured, a dev log
+// otherwise, an honest failure in production without SMTP. Kept as an object so tests can observe/replace `send`.
+export type { OutgoingEmail };
 export const invoiceMailer = {
-  send: async (message: OutgoingEmail): Promise<void> => {
-    if (env.NODE_ENV === 'production') throw new Error('Invoice email transport is not configured');
-    console.log(`[dev email] to=${message.to} subject="${message.subject}"\n${message.html}`);
-  },
+  send: (message: OutgoingEmail): Promise<void> => sendEmail(message),
 };
-
-const escapeHtml = (value: string) => value.replace(/[&<>"']/g, c => ({ '&': '&amp;', '<': '&lt;', '>': '&gt;', '"': '&quot;', "'": '&#39;' })[c] as string);
 
 export interface InvoiceEmailData {
   number: string; customerName: string; customerEmail: string; issueDate: string; dueDate: string; total: string; amountPaid: string; outstanding: string; currency: string;

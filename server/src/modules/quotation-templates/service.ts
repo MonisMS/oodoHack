@@ -9,13 +9,13 @@ import type { listQuery, templateInput } from './schemas.js';
 type ListQuery = z.infer<typeof listQuery>;
 type TemplateInput = z.infer<typeof templateInput>;
 
-const include = { lines: { orderBy: { position: 'asc' } } } satisfies Prisma.QuotationTemplateInclude;
-type Row = QuotationTemplate & { lines: QuotationTemplateLine[] };
+const include = { lines: { orderBy: { position: 'asc' } }, plan: { select: { name: true } } } satisfies Prisma.QuotationTemplateInclude;
+type Row = QuotationTemplate & { lines: QuotationTemplateLine[]; plan: { name: string } };
 
 // Wire shape of the contract's QuotationTemplate; unitPrice null = inherits the current catalog price.
 export function toTemplateDto(t: Row) {
   return {
-    id: t.id, name: t.name, planId: t.planId, validityDays: t.validityDays, isActive: t.isActive,
+    id: t.id, name: t.name, planId: t.planId, planName: t.plan.name, validityDays: t.validityDays, isActive: t.isActive,
     lines: t.lines.map(l => ({ id: l.id, templateId: l.templateId, productId: l.productId, variantId: l.variantId, quantity: l.quantity, unitPrice: l.unitPrice ? l.unitPrice.toFixed(2) : null, position: l.position })),
     createdAt: t.createdAt.toISOString(), updatedAt: t.updatedAt.toISOString(),
   };

@@ -1,10 +1,15 @@
 import type { ModuleRoute } from '../../lib/routes';
-import IndexPage from './pages/IndexPage';
+import HomePage from './pages/HomePage';
+import SubscriptionsPage from './pages/SubscriptionsPage';
+import SubscriptionDetailPage from './pages/SubscriptionDetailPage';
+import InvoicesPage from './pages/InvoicesPage';
+import InvoiceDetailPage from './pages/InvoiceDetailPage';
+import InvoicePrintPage from './pages/InvoicePrintPage';
 export const routes: ModuleRoute[] = [
-  { path: 'portal', element: <IndexPage title="My account" />, roles: ["CUSTOMER"] },
-  { path: 'portal/subscriptions', element: <IndexPage title="My subscriptions" />, roles: ["CUSTOMER"] },
-  { path: 'portal/subscriptions/:id', element: <IndexPage title="My subscription" />, roles: ["CUSTOMER"] },
-  { path: 'portal/invoices', element: <IndexPage title="My invoices" />, roles: ["CUSTOMER"] },
-  { path: 'portal/invoices/:id', element: <IndexPage title="My invoice" />, roles: ["CUSTOMER"] },
-  { path: 'portal/invoices/:id/print', element: <IndexPage title="Print my invoice" />, roles: ["CUSTOMER"] }
+  { path: 'portal', element: <HomePage />, roles: ["CUSTOMER"] },
+  { path: 'portal/subscriptions', element: <SubscriptionsPage />, roles: ["CUSTOMER"] },
+  { path: 'portal/subscriptions/:id', element: <SubscriptionDetailPage />, roles: ["CUSTOMER"] },
+  { path: 'portal/invoices', element: <InvoicesPage />, roles: ["CUSTOMER"] },
+  { path: 'portal/invoices/:id', element: <InvoiceDetailPage />, roles: ["CUSTOMER"] },
+  { path: 'portal/invoices/:id/print', element: <InvoicePrintPage />, roles: ["CUSTOMER"] }
 ];

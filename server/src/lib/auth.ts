@@ -3,16 +3,17 @@ import { prismaAdapter } from 'better-auth/adapters/prisma';
 import { APIError, createAuthMiddleware } from 'better-auth/api';
 import { db } from './db.js';
 import { allowedOrigins, authRateLimitEnabled, env } from './env.js';
+import { renderPasswordResetEmail, sendEmail } from './email.js';
 import { password as passwordPolicy } from './contracts.js';
 
 // Endpoints whose body carries a new password; the frozen contract policy applies to all of them.
 const PASSWORD_FIELD: Record<string, string> = { '/sign-up/email': 'password', '/reset-password': 'newPassword', '/change-password': 'newPassword' };
 
-// D-02 replaces this with the real SMTP sender. Development may log the link (never in production).
+// Password-reset email goes through the shared sender (lib/email.ts): real SMTP when configured, a dev log otherwise,
+// and an honest failure in production without SMTP. Kept as an object so tests can observe/replace `send`.
 export const resetMailer = {
   send: async (input: { to: string; name: string; url: string }): Promise<void> => {
-    if (env.NODE_ENV === 'production') throw new Error('Password-reset email transport is not configured');
-    console.log(`[dev email] password reset for ${input.to}: ${input.url}`);
+    await sendEmail({ to: input.to, ...renderPasswordResetEmail({ name: input.name, url: input.url }) });
   },
 };
 

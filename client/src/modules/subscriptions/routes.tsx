@@ -1,7 +1,11 @@
 import type { ModuleRoute } from '../../lib/routes';
-import IndexPage from './pages/IndexPage';
+import SubscriptionDetailPage from './pages/SubscriptionDetailPage';
+import SubscriptionFormPage from './pages/SubscriptionFormPage';
+import SubscriptionListPage from './pages/SubscriptionListPage';
+const roles: ModuleRoute['roles'] = ['ADMIN', 'STAFF'];
 export const routes: ModuleRoute[] = [
-  { path: 'subscriptions', element: <IndexPage title="Subscriptions" />, roles: ["ADMIN", "STAFF"] },
-  { path: 'subscriptions/new', element: <IndexPage title="New subscription" />, roles: ["ADMIN", "STAFF"] },
-  { path: 'subscriptions/:id', element: <IndexPage title="Subscription details" />, roles: ["ADMIN", "STAFF"] }
+  { path: 'subscriptions', element: <SubscriptionListPage />, roles },
+  { path: 'subscriptions/new', element: <SubscriptionFormPage />, roles },
+  { path: 'subscriptions/:id', element: <SubscriptionDetailPage />, roles },
+  { path: 'subscriptions/:id/edit', element: <SubscriptionFormPage />, roles },
 ];
