@@ -21,11 +21,12 @@ type ChangeLinesInput = z.infer<typeof changeLinesInput>;
 // Shape both create paths feed into `insert`; template lines may leave unitPrice to be resolved from the catalog.
 interface NewSubscription { customerId: string; planId: string; startDate: string; expiryDate: string | null; paymentTermsDays: number; notes?: string | null; lines: LineIn[] }
 
-const include = {
+export const subscriptionInclude = {
   plan: true,
   lines: { orderBy: { position: 'asc' } },
   history: { orderBy: [{ createdAt: 'asc' }, { id: 'asc' }] },
 } satisfies Prisma.SubscriptionInclude;
+const include = subscriptionInclude;
 type Row = Prisma.SubscriptionGetPayload<{ include: typeof include }>;
 
 // Wire shape of the contract's Subscription. `allowedTransitions` is an A-03 addition so screens follow server policy.
