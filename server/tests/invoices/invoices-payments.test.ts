@@ -349,11 +349,12 @@ describe.skipIf(!TEST_DB)('invoices and payments (A-04)', () => {
       await db.invoice.update({where:{id:live.id},data:{periodStart:new Date('2026-01-31')}});
       expect((await reopen(inv.id)).status).toBe(409);
     });
-    it('rejects a cancelled invoice with payment records, even if its cached collected amount is zero',async()=>{
-      const inv=await isolated();
-      await db.payment.create({data:{invoiceId:inv.id,amount:'1.00',method:'UPI',date:new Date(iso(0)),recordedById:staffId}});
+    it('refuses cancellation and reopening after a payment is recorded',async()=>{
+      const inv=await isolated('CONFIRMED');
+      expect((await pay(inv.id,{amount:'1.00'})).status).toBe(201);
+      expect((await staff.post(`/api/invoices/${inv.id}/cancel`).send({})).status).toBe(409);
       expect((await reopen(inv.id)).status).toBe(409);
-      expect((await invoiceOf(inv.id)).status).toBe('CANCELLED');
+      expect((await invoiceOf(inv.id)).status).toBe('PARTIALLY_PAID');
     });
   });
 });

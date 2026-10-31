@@ -1,2 +1,3 @@
-// Add typed API functions here; import DTOs from ../../types/api.
-export { api, queryString } from '../../lib/api';
+import { resource } from '../../lib/catalog-client';
+import type { Plan, PlanInput } from '../../types/api';
+export const plansApi=resource<Plan,PlanInput>('/plans');
