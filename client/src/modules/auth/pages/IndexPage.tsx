@@ -53,20 +53,26 @@ export default function IndexPage(_props: { title?: string }) {
 // One-click demo sign-in for testers and judges. Shown only when VITE_DEMO_LOGINS=true (the seeded demo accounts; never enable on real data).
 const DEMO_PASSWORD = "Brightloop!2026";
 const DEMO_ACCOUNTS = [
-  { label: "Admin", email: "admin@brightloop.local", note: "Everything" },
-  { label: "Staff", email: "priya@brightloop.local", note: "Day-to-day billing" },
-  { label: "Customer", email: "billing@acme.example", note: "Portal only" },
+  { label: "Admin", icon: "shield", email: "admin@brightloop.local", note: "Full access: plans, taxes, users, reports" },
+  { label: "Staff", icon: "settings", email: "priya@brightloop.local", note: "Daily work: subscriptions, invoices, payments" },
+  { label: "Customer", icon: "users", email: "billing@acme.example", note: "Customer portal: own subscriptions and invoices" },
 ] as const;
 function DemoLogins({ disabled, onPick }: { disabled: boolean; onPick: (email: string, password: string) => void }) {
   if (import.meta.env.VITE_DEMO_LOGINS !== "true") return null;
   return (
-    <section aria-label="Demo accounts" style={{ marginTop: 24, paddingTop: 18, borderTop: "1px solid rgba(128,128,128,.25)" }}>
-      <p className="eyebrow" style={{ marginBottom: 10 }}>TRY A DEMO ACCOUNT</p>
-      <div style={{ display: "grid", gap: 8, gridTemplateColumns: "repeat(auto-fit, minmax(110px, 1fr))" }}>
+    <section aria-label="Demo accounts" style={{ marginTop: 26, padding: 18, borderRadius: 14, border: "1px dashed var(--accent)", background: "var(--soft)" }}>
+      <p style={{ margin: 0, fontWeight: 700, color: "var(--ink)" }}>Just testing? Sign in with one click</p>
+      <p className="small muted" style={{ margin: "4px 0 14px" }}>No sign-up needed. Pick a role to explore the app with sample data.</p>
+      <div style={{ display: "grid", gap: 8 }}>
         {DEMO_ACCOUNTS.map((a) => (
-          <button key={a.label} type="button" className="btn" disabled={disabled} onClick={() => onPick(a.email, DEMO_PASSWORD)} title={a.email} style={{ flexDirection: "column", alignItems: "flex-start", gap: 2, textAlign: "left" }}>
-            <strong>Log in as {a.label}</strong>
-            <span className="small muted">{a.note}</span>
+          <button key={a.label} type="button" disabled={disabled} onClick={() => onPick(a.email, DEMO_PASSWORD)} title={a.email}
+            style={{ display: "flex", alignItems: "center", gap: 12, width: "100%", padding: "10px 12px", borderRadius: 10, border: "1px solid var(--line)", background: "var(--surface)", color: "var(--ink)", textAlign: "left", cursor: disabled ? "not-allowed" : "pointer", opacity: disabled ? 0.6 : 1, font: "inherit" }}>
+            <span aria-hidden="true" style={{ display: "grid", placeItems: "center", width: 36, height: 36, flex: "none", borderRadius: 10, background: "var(--accent)", color: "#fff" }}><Icon name={a.icon} size={18} /></span>
+            <span style={{ flex: 1, minWidth: 0 }}>
+              <strong style={{ display: "block" }}>Continue as {a.label}</strong>
+              <span className="small muted" style={{ display: "block" }}>{a.note}</span>
+            </span>
+            <Icon name="arrow" size={15} />
           </button>
         ))}
       </div>
