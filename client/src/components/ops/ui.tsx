@@ -26,8 +26,8 @@ export function Card({ title, actions, children, className = '' }: { title?: Rea
 }
 
 const TONES: Record<string, string> = {
-  green: 'bg-emerald-50 text-emerald-700 ring-emerald-600/20', blue: 'bg-sky-50 text-sky-700 ring-sky-600/20', amber: 'bg-amber-50 text-amber-800 ring-amber-600/20',
-  red: 'bg-rose-50 text-rose-700 ring-rose-600/20', slate: 'bg-slate-100 text-slate-700 ring-slate-500/20', violet: 'bg-violet-50 text-violet-700 ring-violet-600/20',
+  green: 'bg-emerald-50 text-emerald-700 ring-[color-mix(in_srgb,var(--success)_20%,transparent)]', blue: 'bg-sky-50 text-sky-700 ring-[color-mix(in_srgb,var(--info)_20%,transparent)]', amber: 'bg-amber-50 text-amber-800 ring-[color-mix(in_srgb,var(--warning)_20%,transparent)]',
+  red: 'bg-rose-50 text-rose-700 ring-[color-mix(in_srgb,var(--danger)_20%,transparent)]', slate: 'bg-slate-100 text-slate-700 ring-[color-mix(in_srgb,var(--muted)_20%,transparent)]', violet: 'bg-violet-50 text-violet-700 ring-[color-mix(in_srgb,var(--info)_20%,transparent)]',
 };
 const STATUS_TONE: Record<string, string> = {
   ACTIVE: 'green', PAID: 'green', CONFIRMED: 'blue', QUOTATION: 'violet', DRAFT: 'slate', PAUSED: 'amber', PARTIALLY_PAID: 'amber', CLOSED: 'slate', CANCELLED: 'red', OVERDUE: 'red',
@@ -66,7 +66,7 @@ export function Pagination({ page, pageSize, total, onPage }: { page: number; pa
 export function Modal({ title, onClose, children, footer, wide }: { title: string; onClose: () => void; children: ReactNode; footer?: ReactNode; wide?: boolean }) {
   const ref = useRef<HTMLDivElement>(null); const titleId = useId();
   useEffect(() => { const previous = document.activeElement as HTMLElement | null; ref.current?.focus(); const onKey = (e: KeyboardEvent) => { if (e.key === 'Escape') onClose(); }; document.addEventListener('keydown', onKey); return () => { document.removeEventListener('keydown', onKey); previous?.focus(); }; }, [onClose]);
-  return <div className="no-print fixed inset-0 z-50 flex items-start justify-center overflow-y-auto bg-slate-900/40 p-4 pt-16" onMouseDown={e => { if (e.target === e.currentTarget) onClose(); }}>
+  return <div className="no-print fixed inset-0 z-50 flex items-start justify-center overflow-y-auto bg-[color-mix(in_srgb,var(--ink)_40%,transparent)] p-4 pt-16" onMouseDown={e => { if (e.target === e.currentTarget) onClose(); }}>
     <div ref={ref} role="dialog" aria-modal="true" aria-labelledby={titleId} tabIndex={-1} className={`w-full ${wide ? 'max-w-3xl' : 'max-w-lg'} rounded-xl bg-white shadow-xl outline-none`}>
       <header className="flex items-center justify-between border-b px-5 py-3"><h2 id={titleId} className="text-base font-semibold">{title}</h2><button type="button" aria-label="Close" onClick={onClose} className="text-xl leading-none text-slate-400 hover:text-slate-700">×</button></header>
       <div className="px-5 py-4">{children}</div>{footer && <footer className="flex justify-end gap-2 border-t bg-slate-50 px-5 py-3">{footer}</footer>}

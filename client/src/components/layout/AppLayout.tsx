@@ -26,7 +26,7 @@ export function Brand() {
           <path d="M7 7a5 5 0 1 1 0 10H5V7h2Zm10 0a5 5 0 1 0 0 10h2V7h-2Z" />
         </svg>
       </span>
-      brightloop<span style={{ color: "#9aa78f", fontSize: 18 }}>.</span>
+      brightloop<span style={{ color: "var(--faint)", fontSize: 18 }}>.</span>
     </Link>
   );
 }

@@ -237,20 +237,20 @@ export default function IndexPage(_props: { title?: string }) {
                         }))}
                         margin={{ top: 12, right: 22, left: 12, bottom: 8 }}
                       >
-                        <CartesianGrid stroke="#eef1e8" vertical={false} />
+                        <CartesianGrid stroke="var(--chart-grid)" vertical={false} />
                         <XAxis
                           dataKey="month"
                           tickFormatter={monthLabel}
                           tickLine={false}
                           axisLine={false}
-                          tick={{ fontSize: 9, fill: "#9ba58e" }}
+                          tick={{ fontSize: 9, fill: "var(--chart-axis)" }}
                           dy={9}
                           minTickGap={30}
                         />
                         <YAxis
                           tickLine={false}
                           axisLine={false}
-                          tick={{ fontSize: 9, fill: "#9ba58e" }}
+                          tick={{ fontSize: 9, fill: "var(--chart-axis)" }}
                           width={57}
                           tickFormatter={(v) =>
                             `₹${Number(v) >= 100000 ? `${(Number(v) / 100000).toFixed(1)}L` : Number(v) >= 1000 ? `${(Number(v) / 1000).toFixed(0)}k` : v}`
@@ -264,16 +264,16 @@ export default function IndexPage(_props: { title?: string }) {
                           ]}
                           contentStyle={{
                             fontSize: 11,
-                            border: "1px solid #e1e8d8",
+                            border: "1px solid var(--line)",
                             borderRadius: 7,
                             boxShadow: "0 3px 15px #243a2110",
                           }}
                         />
                         <Area
                           dataKey="value"
-                          stroke="#789a65"
+                          stroke="var(--chart-line)"
                           strokeWidth={2}
-                          fill="#eef3e6"
+                          fill="var(--chart-area)"
                           fillOpacity={1}
                           activeDot={{ r: 4, strokeWidth: 2, stroke: "white" }}
                           type="monotone"
