@@ -50,6 +50,35 @@ export default function IndexPage(_props: { title?: string }) {
           : "login";
   return <AuthForm key={mode} mode={mode} />;
 }
+// One-click demo sign-in for testers and judges. Shown only when VITE_DEMO_LOGINS=true (the seeded demo accounts; never enable on real data).
+const DEMO_PASSWORD = "Brightloop!2026";
+const DEMO_ACCOUNTS = [
+  { label: "Admin", icon: "shield", email: "admin@brightloop.local", note: "Full access" },
+  { label: "Staff", icon: "settings", email: "priya@brightloop.local", note: "Billing work" },
+  { label: "Customer", icon: "users", email: "billing@acme.example", note: "Portal view" },
+] as const;
+function DemoLogins({ disabled, onPick }: { disabled: boolean; onPick: (email: string, password: string) => void }) {
+  if (import.meta.env.VITE_DEMO_LOGINS !== "true") return null;
+  return (
+    <section aria-label="Demo accounts" style={{ marginTop: 26 }}>
+      <div style={{ display: "flex", alignItems: "center", gap: 12, color: "var(--muted)", fontSize: 13 }}>
+        <span style={{ flex: 1, height: 1, background: "var(--line)" }} />
+        <span>or explore with a demo account</span>
+        <span style={{ flex: 1, height: 1, background: "var(--line)" }} />
+      </div>
+      <div style={{ display: "grid", gap: 10, gridTemplateColumns: "repeat(3, 1fr)", marginTop: 14 }}>
+        {DEMO_ACCOUNTS.map((a) => (
+          <button key={a.label} type="button" disabled={disabled} onClick={() => onPick(a.email, DEMO_PASSWORD)} title={`Sign in as ${a.email}`}
+            style={{ display: "flex", flexDirection: "column", alignItems: "center", gap: 6, padding: "14px 6px", borderRadius: 12, border: "1px solid var(--line)", background: "var(--surface)", color: "var(--ink)", cursor: disabled ? "not-allowed" : "pointer", opacity: disabled ? 0.6 : 1, font: "inherit" }}>
+            <span aria-hidden="true" style={{ display: "grid", placeItems: "center", width: 34, height: 34, borderRadius: 999, background: "var(--soft)", color: "var(--accent)" }}><Icon name={a.icon} size={17} /></span>
+            <strong style={{ fontSize: 14 }}>{a.label}</strong>
+            <span className="small muted" style={{ fontSize: 12 }}>{a.note}</span>
+          </button>
+        ))}
+      </div>
+    </section>
+  );
+}
 function AuthForm({ mode }: { mode: keyof typeof content }) {
   const { status, role, signIn, signUp, requestReset, resetPassword } =
     useSession();
@@ -117,6 +146,18 @@ function AuthForm({ mode }: { mode: keyof typeof content }) {
       }
     } catch {
       setError("We couldn’t complete that request. Please try again.");
+      setPending(false);
+    }
+  };
+  const demoLogin = async (demoEmail: string, demoPassword: string) => {
+    setError("");
+    setFields({});
+    setEmail(demoEmail);
+    setPassword(demoPassword);
+    setPending(true);
+    const result = await signIn({ email: demoEmail, password: demoPassword });
+    if (!result.ok) {
+      setError(result.code === "INVALID_EMAIL_OR_PASSWORD" ? "The demo accounts are not set up on this server. Run the seed (npm run db:seed)." : result.message);
       setPending(false);
     }
   };
@@ -238,6 +279,7 @@ function AuthForm({ mode }: { mode: keyof typeof content }) {
                   <Icon name="arrow" size={15} />
                 </Button>
               </form>
+              {mode === "login" && <DemoLogins disabled={pending || status === "loading"} onPick={demoLogin} />}
               <div className="auth-links">
                 {mode === "login" ? (
                   <>

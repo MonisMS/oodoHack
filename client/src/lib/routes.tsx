@@ -20,7 +20,7 @@ export function RouteAccess({
   const location = useLocation();
   if (roles && status === "loading")
     return <Loading label="Opening your workspace…" />;
-  if (roles && !role)
+  if (roles && status === "anonymous")
     return (
       <Navigate
         to="/login"
