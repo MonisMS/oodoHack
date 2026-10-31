@@ -287,6 +287,10 @@ model Subscription {
   // Cancellation scheduled for the end of the paid period: expiryDate was moved up and the original is kept to undo it.
   cancelScheduledAt        DateTime?
   expiryBeforeCancellation DateTime?           @db.Date
+  // Quotation validity (copied from the template when the subscription is created from one). The quotation stays acceptable for
+  // this many days after it is sent (DRAFT -> QUOTATION); an expired quotation cannot be confirmed until it is edited (re-issued).
+  quotationValidityDays    Int?
+  quotationValidUntil      DateTime?           @db.Date
   createdAt                DateTime            @default(now())
   updatedAt                DateTime            @updatedAt
   customer                 User                @relation(fields: [customerId], references: [id], onDelete: Restrict)

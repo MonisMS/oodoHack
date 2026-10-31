@@ -125,12 +125,12 @@ describe.skipIf(!TEST_DB)('templates and subscriptions (A-03)', () => {
   });
 
   describe('from template', () => {
-    it('copies lines, sets expiry = start + validityDays, links the template and freezes prices', async () => {
+    it('copies lines, links the template, leaves the term open-ended and freezes prices', async () => {
       const t = (await staff.post('/api/quotation-templates').send({ name: `FT ${uid()}`, planId: plan.id, validityDays: 30, lines: [{ productId: product.id, variantId: odoo.id, quantity: 2 }] })).body.data;
       const r = await staff.post('/api/subscriptions/from-template').send({ templateId: t.id, customerId, startDate: '2026-03-01', paymentTermsDays: 30 });
       expect(r.status, JSON.stringify(r.body)).toBe(201);
       const s = r.body.data;
-      expect(s).toMatchObject({ status: 'DRAFT', templateId: t.id, planId: plan.id, startDate: '2026-03-01', expiryDate: '2026-03-31', nextInvoiceDate: '2026-03-01', paymentTermsDays: 30 });
+      expect(s).toMatchObject({ status: 'DRAFT', templateId: t.id, planId: plan.id, startDate: '2026-03-01', expiryDate: null, nextInvoiceDate: '2026-03-01', paymentTermsDays: 30, quotationValidityDays: 30 });
       expect(s.lines[0]).toMatchObject({ quantity: 2, unitPrice: '1560.00' });
       await db.product.update({ where: { id: product.id }, data: { salesPrice: '2000.00' } });
       expect((await staff.get(`/api/subscriptions/${s.id}`)).body.data.lines[0].unitPrice).toBe('1560.00'); // later catalog changes never touch it
@@ -369,6 +369,95 @@ describe.skipIf(!TEST_DB)('templates and subscriptions (A-03)', () => {
       expect(rs.every(r => r.status === 200)).toBe(true);
       const lines = await db.subscriptionLine.findMany({ where: { subscriptionId: id } });
       expect(lines).toHaveLength(1); expect([2, 3, 4]).toContain(lines[0]!.quantity);
+    });
+  });
+
+  describe('line taxes and amounts (A-12)', () => {
+    // Own taxed catalog so the shared product/plan used by the other tests keep their (untaxed) behaviour.
+    const taxed = async () => {
+      const gst = await db.tax.create({ data: { name: `GST18 ${uid()}`, percentage: '18' } });
+      const p = await db.product.create({ data: { name: `Taxed ${uid()}`, salesPrice: '1000.00', costPrice: '400.00', taxes: { connect: { id: gst.id } } } });
+      const v = await db.productVariant.create({ data: { productId: p.id, attribute: 'Brand', value: 'Odoo', extraPrice: '560.00' } });
+      const pl = await makePlan({ price: '500.00', closableEarly: true, taxes: { connect: { id: gst.id } } });
+      return { gst, p, v, pl };
+    };
+
+    it('shows each line with its taxes and amount, the plan fee, and the per-period total (before discounts)', async () => {
+      const { gst, p, v, pl } = await taxed();
+      const r = await staff.post('/api/subscriptions').send(body({ planId: pl.id, lines: [{ productId: p.id, variantId: v.id, quantity: 2 }, { productId: product.id, quantity: 1, unitPrice: '100.00' }] }));
+      expect(r.status, JSON.stringify(r.body)).toBe(201);
+      const s = r.body.data;
+      expect(s.lines[0]).toMatchObject({ quantity: 2, unitPrice: '1560.00', subtotal: '3120.00', taxTotal: '561.60', total: '3681.60' });
+      expect(s.lines[0].taxes).toEqual([{ name: gst.name, percentage: '18', amount: '561.60' }]);
+      expect(s.lines[1]).toMatchObject({ subtotal: '100.00', taxTotal: '0.00', total: '100.00', taxes: [] }); // untaxed product
+      expect(s.planFee).toMatchObject({ description: expect.any(String), quantity: 1, unitPrice: '500.00', subtotal: '500.00', taxTotal: '90.00', total: '590.00' });
+      expect(s.estimate).toEqual({ subtotal: '3720.00', taxTotal: '651.60', total: '4371.60' });
+    });
+
+    it('uses the locked plan fee, and the estimate equals the real first invoice (same calculator)', async () => {
+      const { p, v, pl } = await taxed();
+      const s = (await staff.post('/api/subscriptions').send(body({ planId: pl.id, startDate: iso(-5), lines: [{ productId: p.id, variantId: v.id, quantity: 2 }] }))).body.data;
+      await db.plan.update({ where: { id: pl.id }, data: { price: '999.00' } }); // a later plan price change must not move the estimate
+      expect((await staff.get(`/api/subscriptions/${s.id}`)).body.data.planFee.unitPrice).toBe('500.00');
+      await activate(s.id); await settle(s.id);
+      const invoice = await db.invoice.findFirstOrThrow({ where: { subscriptionId: s.id } });
+      expect(invoice.subtotal.toFixed(2)).toBe(s.estimate.subtotal); // 3,620.00: plan fee + lines, whatever discounts exist elsewhere
+      if (invoice.discountTotal.isZero()) { expect(invoice.taxTotal.toFixed(2)).toBe(s.estimate.taxTotal); expect(invoice.total.toFixed(2)).toBe(s.estimate.total); }
+    });
+
+    it('ignores deactivated taxes, exactly like billing does', async () => {
+      const { gst, p, pl } = await taxed();
+      await db.tax.update({ where: { id: gst.id }, data: { isActive: false } });
+      const s = (await staff.post('/api/subscriptions').send(body({ planId: pl.id, lines: [{ productId: p.id, quantity: 2 }] }))).body.data;
+      expect(s.lines[0]).toMatchObject({ taxTotal: '0.00', taxes: [] }); expect(s.estimate.taxTotal).toBe('0.00');
+    });
+  });
+
+  describe('quotation validity (A-12)', () => {
+    const template = async (validityDays = 30) => (await staff.post('/api/quotation-templates').send({ name: `QV ${uid()}`, planId: plan.id, validityDays, lines: [{ productId: product.id, quantity: 2 }] })).body.data;
+    const fromTemplate = async (t: { id: string }, over: Record<string, unknown> = {}) => staff.post('/api/subscriptions/from-template').send({ templateId: t.id, customerId, startDate: iso(0), paymentTermsDays: 15, ...over });
+    const addDaysIso = (d: string, n: number) => new Date(new Date(`${d}T00:00:00Z`).getTime() + n * 86_400_000).toISOString().slice(0, 10);
+
+    it('the template days are the quote\'s validity, not the subscription\'s end date', async () => {
+      const t = await template(14); const r = await fromTemplate(t, { startDate: '2026-03-01' });
+      expect(r.status, JSON.stringify(r.body)).toBe(201);
+      expect(r.body.data).toMatchObject({ status: 'DRAFT', expiryDate: null, quotationValidityDays: 14, quotationValidUntil: null, quotationExpired: false }); // the customer chooses the term, not the template
+      const dated = await fromTemplate(t, { expiryDate: iso(400) });
+      expect(dated.body.data.expiryDate).toBe(iso(400));
+      expect((await fromTemplate(t, { startDate: '2026-05-10', expiryDate: '2026-05-09' })).status).toBe(422);
+      const manual = await createSub(); expect(manual).toMatchObject({ quotationValidityDays: null, quotationValidUntil: null });
+    });
+
+    it('starts the validity window when the quotation is sent, and only counts for template quotes', async () => {
+      const s = (await fromTemplate(await template(14))).body.data;
+      const sent = await move(s.id, 'QUOTATION');
+      expect(sent.body.data).toMatchObject({ status: 'QUOTATION', quotationValidUntil: addDaysIso((await import('../../src/lib/dates.js')).todayBusiness(), 14), quotationExpired: false });
+      const manual = await createSub(); const sentManual = await move(manual.id, 'QUOTATION'); expect(sentManual.body.data.quotationValidUntil).toBeNull();
+    });
+
+    it('refuses to confirm an expired quotation, hides the button, but still allows closing', async () => {
+      const s = (await fromTemplate(await template(30))).body.data; await move(s.id, 'QUOTATION');
+      await db.subscription.update({ where: { id: s.id }, data: { quotationValidUntil: new Date(iso(-1)) } });
+      const view = (await staff.get(`/api/subscriptions/${s.id}`)).body.data;
+      expect(view).toMatchObject({ quotationExpired: true }); expect(view.allowedTransitions).not.toContain('CONFIRMED'); expect(view.allowedTransitions).toContain('CLOSED');
+      const refused = await move(s.id, 'CONFIRMED'); expect(refused.status).toBe(409); expect(refused.body.error.code).toBe('QUOTATION_EXPIRED'); expect(refused.body.error.message).toMatch(/expired on/);
+      expect((await move(s.id, 'CLOSED')).status).toBe(200);
+    });
+
+    it('editing an expired quotation re-issues it, after which it can be confirmed', async () => {
+      const s = (await fromTemplate(await template(30))).body.data; await move(s.id, 'QUOTATION');
+      await db.subscription.update({ where: { id: s.id }, data: { quotationValidUntil: new Date(iso(-3)) } });
+      expect((await move(s.id, 'CONFIRMED')).status).toBe(409);
+      const edited = await staff.put(`/api/subscriptions/${s.id}`).send(body({ startDate: iso(0), lines: [{ productId: product.id, quantity: 3 }] }));
+      expect(edited.status, JSON.stringify(edited.body)).toBe(200);
+      expect(edited.body.data).toMatchObject({ quotationExpired: false, quotationValidityDays: 30, quotationValidUntil: addDaysIso((await import('../../src/lib/dates.js')).todayBusiness(), 30) });
+      expect((await move(s.id, 'CONFIRMED')).status).toBe(200);
+    });
+
+    it('does not block a quotation that is still valid, on its last day included', async () => {
+      const s = (await fromTemplate(await template(30))).body.data; await move(s.id, 'QUOTATION');
+      await db.subscription.update({ where: { id: s.id }, data: { quotationValidUntil: new Date((await import('../../src/lib/dates.js')).todayBusiness()) } }); // valid through today
+      expect((await move(s.id, 'CONFIRMED')).status).toBe(200);
     });
   });
 

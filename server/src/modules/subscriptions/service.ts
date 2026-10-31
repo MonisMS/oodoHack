@@ -5,6 +5,7 @@ import { AppError } from '../../lib/errors.js';
 import { lockRow } from '../../lib/locks.js';
 import { nextNumber } from '../../lib/numbers.js';
 import { planSubscriptionTransition } from '../../lib/domain/states.js';
+import { buildInvoiceDraft, type ChargeInput, type DraftLine } from '../../lib/domain/invoice-draft.js';
 import { DomainError } from '../../lib/domain/errors.js';
 import { billSubscription } from '../billing-engine/service.js';
 import { addDays, assertCustomer, assertPlanSelectable, assertScheduleBounds, dateOnly, parseDate, resolveLines, todayBusiness, totalQuantity, type LineIn, type Tx } from '../../lib/catalog-lines.js';
@@ -21,28 +22,56 @@ type ChangeLinesInput = z.infer<typeof changeLinesInput>;
 // Shape both create paths feed into `insert`; template lines may leave unitPrice to be resolved from the catalog.
 interface NewSubscription { customerId: string; planId: string; startDate: string; expiryDate: string | null; paymentTermsDays: number; notes?: string | null; lines: LineIn[] }
 
+const taxSelect = { id: true, name: true, percentage: true } as const;
 export const subscriptionInclude = {
-  plan: true,
+  // Active taxes are loaded so each line can show the tax and amount it will be billed with (same rule the billing engine uses).
+  plan: { include: { taxes: { where: { isActive: true }, select: taxSelect } } },
   customer: { select: { name: true, email: true } },
-  lines: { orderBy: { position: 'asc' } },
+  lines: { orderBy: { position: 'asc' }, include: { product: { select: { taxes: { where: { isActive: true }, select: taxSelect } } } } },
   history: { orderBy: [{ createdAt: 'asc' }, { id: 'asc' }] },
 } satisfies Prisma.SubscriptionInclude;
 const include = subscriptionInclude;
 type Row = Prisma.SubscriptionGetPayload<{ include: typeof include }>;
 
 // Wire shape of the contract's Subscription. `allowedTransitions` is an A-03 addition so screens follow server policy.
+/**
+ * What one billing period will cost, BEFORE discounts: the plan fee plus every line with its taxes and amount. It is computed by the
+ * billing engine's own invoice calculator (no second set of money rules), so it equals the first invoice when no discount applies.
+ * Discounts are decided at invoice time, so they are not part of this estimate.
+ */
+function estimateCharges(s: Row) {
+  const rate = (t: { id: string; name: string; percentage: Prisma.Decimal }) => ({ id: t.id, name: t.name, percentage: t.percentage.toString() });
+  const charges: ChargeInput[] = [
+    { productId: null, description: s.plan.name, quantity: 1, unitPrice: (s.planPrice ?? s.plan.price).toFixed(2), taxes: s.plan.taxes.map(rate) },
+    ...s.lines.map(l => ({ productId: l.productId, variantId: l.variantId, description: l.description, quantity: l.quantity, unitPrice: l.unitPrice.toFixed(2), taxes: l.product.taxes.map(rate) })),
+  ];
+  try {
+    const draft = buildInvoiceDraft({ periodStart: dateOnly(s.startDate), charges, discounts: [] });
+    const view = (line: DraftLine) => ({ subtotal: line.subtotal, taxTotal: line.taxTotal, total: line.total, taxes: line.taxes.map(t => ({ name: t.name, percentage: t.percentage, amount: t.amount })) });
+    const [fee, ...rest] = draft.lines.filter(l => l.kind === 'CHARGE');
+    return { planFee: fee ? { description: fee.description, quantity: 1, unitPrice: fee.unitPrice, ...view(fee) } : null, lines: rest.map(view), estimate: { subtotal: draft.subtotal, taxTotal: draft.taxTotal, total: draft.total } };
+  } catch { return { planFee: null, lines: [], estimate: null }; } // a malformed legacy row must never break the screen
+}
+
 export function toSubscriptionDto(s: Row) {
   const expiryDate = s.expiryDate ? dateOnly(s.expiryDate) : null;
+  const today = todayBusiness();
+  const quotationValidUntil = s.quotationValidUntil ? dateOnly(s.quotationValidUntil) : null;
+  const quotationExpired = s.status === 'QUOTATION' && quotationValidUntil !== null && quotationValidUntil < today;
+  const charges = estimateCharges(s);
   return {
     id: s.id, number: s.number, customerId: s.customerId, customerName: s.customer.name, customerEmail: s.customer.email, planId: s.planId, planName: s.plan.name, planBillingPeriod: s.plan.billingPeriod, templateId: s.templateId, status: s.status,
     startDate: dateOnly(s.startDate), expiryDate, nextInvoiceDate: dateOnly(s.nextInvoiceDate),
     billingAnchorDay: s.billingAnchorDay, billingAnchorMonth: s.billingAnchorMonth, paymentTermsDays: s.paymentTermsDays, notes: s.notes,
-    lines: s.lines.map(l => ({ id: l.id, subscriptionId: l.subscriptionId, productId: l.productId, variantId: l.variantId, description: l.description, quantity: l.quantity, unitPrice: l.unitPrice.toFixed(2), position: l.position })),
+    lines: s.lines.map((l, i) => ({ id: l.id, subscriptionId: l.subscriptionId, productId: l.productId, variantId: l.variantId, description: l.description, quantity: l.quantity, unitPrice: l.unitPrice.toFixed(2), position: l.position, ...(charges.lines[i] ?? { subtotal: null, taxTotal: null, total: null, taxes: [] }) })),
+    planFee: charges.planFee, estimate: charges.estimate,
+    quotationValidityDays: s.quotationValidityDays, quotationValidUntil, quotationExpired,
     history: s.history.map(e => ({ id: e.id, subscriptionId: e.subscriptionId, fromStatus: e.fromStatus, toStatus: e.toStatus, actorId: e.actorId, reason: e.reason, createdAt: e.createdAt.toISOString() })),
     planPrice: s.planPrice ? s.planPrice.toFixed(2) : null,
     cancelAtPeriodEnd: s.cancelScheduledAt !== null,
     billingDue: isBillingDue(s),
-    allowedTransitions: allowedTransitions(s.status, { plan: s.plan, expiryDate, today: todayBusiness() }),
+    // An expired quotation cannot be confirmed until it is edited (re-issued), so the button is not offered.
+    allowedTransitions: allowedTransitions(s.status, { plan: s.plan, expiryDate, today }).filter(to => !(quotationExpired && to === 'CONFIRMED')),
     createdAt: s.createdAt.toISOString(), updatedAt: s.updatedAt.toISOString(),
   };
 }
@@ -70,11 +99,11 @@ async function validate(tx: Tx, input: NewSubscription) {
   return { plan, lines: lines.map((l, position) => ({ productId: l.productId, variantId: l.variantId, description: l.description, quantity: l.quantity, unitPrice: l.unitPrice as string, position })) };
 }
 
-async function insert(tx: Tx, input: NewSubscription, templateId: string | null) {
+async function insert(tx: Tx, input: NewSubscription, templateId: string | null, quotationValidityDays: number | null = null) {
   const { plan, lines } = await validate(tx, input);
   const number = await nextNumber(tx, 'SUB', Number(todayBusiness().slice(0, 4)));
   const created = await tx.subscription.create({
-    data: { number, customerId: input.customerId, planId: input.planId, templateId, status: 'DRAFT', ...schedule(input.startDate), expiryDate: input.expiryDate ? parseDate(input.expiryDate) : null, paymentTermsDays: input.paymentTermsDays, notes: input.notes ?? null, planPrice: plan.price, lines: { create: lines } },
+    data: { number, customerId: input.customerId, planId: input.planId, templateId, status: 'DRAFT', ...schedule(input.startDate), expiryDate: input.expiryDate ? parseDate(input.expiryDate) : null, paymentTermsDays: input.paymentTermsDays, notes: input.notes ?? null, planPrice: plan.price, quotationValidityDays, lines: { create: lines } },
     select: { id: true },
   });
   return created.id;
@@ -116,7 +145,7 @@ export async function createFromTemplate(input: FromTemplateInput, actor: Princi
     if (!template || !template.isActive) throw new AppError(422, 'VALIDATION_ERROR', 'Check the submitted fields', { templateId: ['Template not found or inactive'] });
     // Lines are independent copies; missing template prices resolve from the catalog now and are then frozen.
     const lines = template.lines.map(l => ({ productId: l.productId, variantId: l.variantId, quantity: l.quantity, ...(l.unitPrice ? { unitPrice: l.unitPrice.toFixed(2) } : {}) }));
-    return insert(tx, { customerId: input.customerId, planId: template.planId, startDate: input.startDate, expiryDate: addDays(input.startDate, template.validityDays), paymentTermsDays: input.paymentTermsDays, notes: input.notes ?? null, lines }, template.id);
+    return insert(tx, { customerId: input.customerId, planId: template.planId, startDate: input.startDate, expiryDate: input.expiryDate, paymentTermsDays: input.paymentTermsDays, notes: input.notes ?? null, lines }, template.id, template.validityDays);
   });
   return get(id, actor);
 }
@@ -124,13 +153,15 @@ export async function createFromTemplate(input: FromTemplateInput, actor: Princi
 export async function replace(id: string, input: Input, actor: Principal) {
   await db.$transaction(async tx => {
     await lock(tx, id);
-    const current = await tx.subscription.findUniqueOrThrow({ where: { id }, select: { status: true } });
+    const current = await tx.subscription.findUniqueOrThrow({ where: { id }, select: { status: true, quotationValidityDays: true } });
     if (current.status !== 'DRAFT' && current.status !== 'QUOTATION') throw new AppError(409, 'CONFLICT', 'Only DRAFT or QUOTATION subscriptions can be edited');
+    // Editing a quotation re-issues it: its validity window starts again from today.
+    const reissued = current.status === 'QUOTATION' && current.quotationValidityDays ? { quotationValidUntil: parseDate(addDays(todayBusiness(), current.quotationValidityDays)) } : {};
     const { plan, lines } = await validate(tx, input);
     await tx.subscriptionLine.deleteMany({ where: { subscriptionId: id } });
     await tx.subscription.update({
       where: { id },
-      data: { customerId: input.customerId, planId: input.planId, ...schedule(input.startDate), expiryDate: input.expiryDate ? parseDate(input.expiryDate) : null, paymentTermsDays: input.paymentTermsDays, notes: input.notes ?? null, planPrice: plan.price, lines: { create: lines } },
+      data: { customerId: input.customerId, planId: input.planId, ...schedule(input.startDate), expiryDate: input.expiryDate ? parseDate(input.expiryDate) : null, paymentTermsDays: input.paymentTermsDays, notes: input.notes ?? null, planPrice: plan.price, ...reissued, lines: { create: lines } },
     });
   });
   return get(id, actor);
@@ -166,6 +197,9 @@ export async function transition(id: string, input: TransitionInput, actor: Prin
     const expiryDate = sub.expiryDate ? dateOnly(sub.expiryDate) : null;
     const check = canTransition(from, input.to, { plan: sub.plan, expiryDate, today: todayBusiness(), renewalExpiryDate: input.renewalExpiryDate ?? null });
     if (!check.ok) throw new AppError(409, 'INVALID_TRANSITION', check.reason);
+    if (from === 'QUOTATION' && input.to === 'CONFIRMED' && sub.quotationValidUntil && dateOnly(sub.quotationValidUntil) < todayBusiness()) {
+      throw new AppError(409, 'QUOTATION_EXPIRED', `This quotation expired on ${dateOnly(sub.quotationValidUntil)}. Edit it to re-issue the quotation, or close it.`);
+    }
     if (needsRevalidation(from, input.to)) {
       if (sub.lines.length === 0) throw new AppError(422, 'VALIDATION_ERROR', 'Check the submitted fields', { lines: ['A subscription needs at least one line'] });
       await assertCustomer(tx, sub.customerId);
@@ -180,7 +214,9 @@ export async function transition(id: string, input: TransitionInput, actor: Prin
     // The planner preserves issued coverage, blocks discarded active debt and waives paused/closed gaps.
     // Renewal starts a new term, so it re-prices to the plan's current fee and drops any scheduled cancellation.
     const renewing = from === 'CLOSED' && input.to === 'ACTIVE';
-    await tx.subscription.update({ where:{id},data:{status:change.status,nextInvoiceDate:parseDate(change.nextInvoiceDate),billingAnchorDay:change.billingAnchorDay,billingAnchorMonth:change.billingAnchorMonth,expiryDate:change.expiryDate ? parseDate(change.expiryDate) : null,...(renewing ? { planPrice: sub.plan.price, cancelScheduledAt: null, expiryBeforeCancellation: null } : {})} });
+    // The quotation's validity window starts when it is sent to the customer (DRAFT -> QUOTATION).
+    const quoteSent = from === 'DRAFT' && input.to === 'QUOTATION' && sub.quotationValidityDays ? { quotationValidUntil: parseDate(addDays(todayBusiness(), sub.quotationValidityDays)) } : {};
+    await tx.subscription.update({ where:{id},data:{status:change.status,nextInvoiceDate:parseDate(change.nextInvoiceDate),billingAnchorDay:change.billingAnchorDay,billingAnchorMonth:change.billingAnchorMonth,expiryDate:change.expiryDate ? parseDate(change.expiryDate) : null,...quoteSent,...(renewing ? { planPrice: sub.plan.price, cancelScheduledAt: null, expiryBeforeCancellation: null } : {})} });
     await tx.subscriptionEvent.create({ data: { subscriptionId: id, fromStatus: from, toStatus: input.to, actorId: actor.id, reason: input.reason ?? null } });
   }));
   return get(id, actor);
