@@ -88,6 +88,8 @@ Variant must belong to the line product. Missing unitPrice resolves to product.s
 
 Subscription create is DRAFT, nextInvoiceDate=startDate, billingAnchorDay/month from startDate; customer must have role CUSTOMER and be active. Total product quantity must meet plan.minQuantity. Start must lie within plan availability (inclusive). Expiry cannot precede start. Only DRAFT/QUOTATION subscriptions may be edited; server recomputes schedule/anchor when start changes and always validates all relations. Template creation copies lines, resolves missing prices, sets expiryDate = startDate + validityDays UTC days and nextInvoiceDate=startDate. In v1 validityDays intentionally determines subscription expiry; no second quotation-validity field. Template lines are independent copies after creation.
 
+**A-03 addition:** every Subscription response includes `allowedTransitions` (statuses the actor may move to now, from the server's transition rules). Screens render transition buttons from it; CLOSED -> ACTIVE (renewal) is listed when the plan is renewable and then requires `renewalExpiryDate`. Line `description` is generated server-side as `<product name>` or `<product name> - <attribute>: <value>`.
+
 ### Subscription state machine (any unlisted pair → 409)
 
 | From | To | Condition |
@@ -303,7 +305,7 @@ export interface SubscriptionInput { customerId: Id; planId: Id; startDate: Date
 export interface FromTemplateInput { templateId: Id; customerId: Id; startDate: DateOnly; paymentTermsDays: number; notes?: string | null }
 export interface SubscriptionLine { id: Id; subscriptionId: Id; productId: Id; variantId: Id | null; description: string; quantity: number; unitPrice: Money; position: number }
 export interface SubscriptionEvent { id: Id; subscriptionId: Id; fromStatus: SubscriptionStatus; toStatus: SubscriptionStatus; actorId: Id | null; reason: string | null; createdAt: Timestamp }
-export interface Subscription extends Omit<SubscriptionInput, 'expiryDate' | 'notes' | 'lines'> { id: Id; number: string; templateId: Id | null; status: SubscriptionStatus; expiryDate: DateOnly | null; nextInvoiceDate: DateOnly; billingAnchorDay: number; billingAnchorMonth: number; notes: string | null; lines: SubscriptionLine[]; history: SubscriptionEvent[]; createdAt: Timestamp; updatedAt: Timestamp }
+export interface Subscription extends Omit<SubscriptionInput, 'expiryDate' | 'notes' | 'lines'> { id: Id; number: string; templateId: Id | null; status: SubscriptionStatus; expiryDate: DateOnly | null; nextInvoiceDate: DateOnly; billingAnchorDay: number; billingAnchorMonth: number; notes: string | null; lines: SubscriptionLine[]; history: SubscriptionEvent[]; allowedTransitions: SubscriptionStatus[]; createdAt: Timestamp; updatedAt: Timestamp }
 export interface TransitionInput { to: SubscriptionStatus; reason?: string; renewalExpiryDate?: DateOnly }
 export interface TaxSnapshot { taxId: Id; name: string; percentage: string; amount: Money }
 export interface InvoiceLine { id: Id; invoiceId: Id; kind: 'CHARGE' | 'DISCOUNT'; productId: Id | null; variantId: Id | null; discountId: Id | null; description: string; quantity: number; unitPrice: Money; subtotal: Money; taxTotal: Money; total: Money; taxes: TaxSnapshot[]; position: number }

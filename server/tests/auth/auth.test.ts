@@ -72,7 +72,7 @@ describe.skipIf(!TEST_DB)('Better Auth integration', () => {
   it('creates staff only through the server helper and enforces role guards', async () => {
     const email = unique('staff'); await createCredentialUser({ name: 'Sam Staff', email, password: GOOD, role: 'STAFF' });
     const agent = request.agent(app); expect((await signIn(agent, email, GOOD)).status).toBe(200);
-    expect((await agent.get('/api/subscriptions')).status).toBe(501); // staff allowed
+    expect((await agent.get('/api/subscriptions')).status).toBe(200); // staff allowed
     expect((await agent.post('/api/products').send({})).status).toBe(403); // admin-only
     await expect(createCredentialUser({ name: 'Bad', email: unique('bad'), password: 'weak', role: 'STAFF' })).rejects.toThrow();
   });
