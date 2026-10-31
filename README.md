@@ -105,3 +105,20 @@ After foundation-v1, only A edits schema.prisma or API_CONTRACT.md, consulting B
 Checkpoints 11:30, 13:30, 15:30 IST: pull main, migrate, seed, run typecheck/tests/build and demo smoke test. Feature freeze 16:15; bug fixes only until 16:45; record video at 16:45; code freeze 17:00, video submission 17:30. These are planning times, shifted together if kickoff/deadline changes. A has a 40-minute pre-freeze reserve; B must hand off by 12:15 before leaving at 12:30; C/D have 45/50-minute reserves. The full-day MUST budgets fit the planning window in TASKS.md. Test only against disposable/local data, especially later concurrency and performance tests.
 
 Billing is disabled until B implements transactions and node-cron and A integrates the shared startup wiring. Do not remove the explicit scheduler startup refusal until real job wiring exists. Email delivery is implemented by feature owners later; development fallback logs may include reset links, so never use them in production. Tasks, dependencies, acceptance priorities and cut list are in TASKS.md.
+
+## Production notes (verified 2026-10-31 on a fresh database)
+
+Steps: `npm ci`, set the environment below, `npm run db:deploy` (applies committed migrations, never resets), `npm run build`, then `npm run start -w server` from a trusted host. A fresh empty PostgreSQL migrates cleanly (2 migrations) and the compiled server boots with `NODE_ENV=production`.
+
+| Variable | Production requirement |
+|---|---|
+| `NODE_ENV` | `production` |
+| `DATABASE_URL` | the production PostgreSQL |
+| `BETTER_AUTH_SECRET` | random, 32+ characters; the server refuses to start with the development default |
+| `BETTER_AUTH_URL` | the public **https** URL of the API (this makes the session cookie `Secure`) |
+| `CLIENT_ORIGIN` | the exact browser origin of the web app; this is the only origin allowed to make credentialed or state-changing calls |
+| `DEV_AUTH_ENABLED` | must be `false` (the server refuses to start otherwise; `x-dev-*` headers are rejected) |
+| `BILLING_CRON_ENABLED` | stays `false` until B's billing scheduler is wired |
+
+Security behaviour worth knowing: the browser session is an httpOnly, SameSite=Lax cookie; every state-changing request (including `/api/auth/*`) from a foreign `Origin` is refused with 403 (CSRF/login-CSRF defence, `middleware/origin-guard.ts`); Better Auth rate-limits sign-in, sign-up and password reset per IP using in-process memory (use a shared store before running several API instances); helmet headers are on. Serve the web app and `/api` from the same origin (reverse proxy), as the Vite dev proxy does. Over plain http the session cookie is not `Secure`, so use https for any real deployment. Run `TEST_DATABASE_URL=... npm test -w server` against a disposable local database to execute the integration and security suites (they are skipped without it).
+

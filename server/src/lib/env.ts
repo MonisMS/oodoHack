@@ -7,3 +7,12 @@ export const env = z.object({ NODE_ENV: z.enum(['development','test','production
 if (env.NODE_ENV === 'production' && env.DEV_AUTH_ENABLED) throw new Error('DEV_AUTH_ENABLED must be false in production');
 if (env.BILLING_CRON_ENABLED) throw new Error('Billing scheduler is not implemented yet; leave BILLING_CRON_ENABLED=false until Person A wires the real billing service');
 if (env.NODE_ENV === 'production' && env.BETTER_AUTH_SECRET === DEV_SECRET) throw new Error('Set BETTER_AUTH_SECRET to a random value of 32+ characters in production');
+
+// Browser origins allowed to call the API with credentials. In development `localhost` and `127.0.0.1` are interchangeable
+// (Vite binds 127.0.0.1); production allows exactly CLIENT_ORIGIN.
+const swapLoopback = (origin: string) => origin.includes('//localhost') ? origin.replace('//localhost', '//127.0.0.1') : origin.replace('//127.0.0.1', '//localhost');
+export const allowedOrigins = [...new Set([env.CLIENT_ORIGIN, ...(env.NODE_ENV === 'production' ? [] : [swapLoopback(env.CLIENT_ORIGIN)])])];
+
+// Auth rate limiting is on everywhere except tests (which sign in constantly); AUTH_RATE_LIMIT=true|false overrides.
+export const authRateLimitEnabled = process.env.AUTH_RATE_LIMIT ? process.env.AUTH_RATE_LIMIT === 'true' : env.NODE_ENV !== 'test';
+

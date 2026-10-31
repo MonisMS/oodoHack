@@ -2,7 +2,7 @@ import { betterAuth } from 'better-auth';
 import { prismaAdapter } from 'better-auth/adapters/prisma';
 import { APIError, createAuthMiddleware } from 'better-auth/api';
 import { db } from './db.js';
-import { env } from './env.js';
+import { allowedOrigins, authRateLimitEnabled, env } from './env.js';
 import { password as passwordPolicy } from './contracts.js';
 
 // Endpoints whose body carries a new password; the frozen contract policy applies to all of them.
@@ -19,7 +19,17 @@ export const resetMailer = {
 export const auth = betterAuth({
   baseURL: env.BETTER_AUTH_URL,
   secret: env.BETTER_AUTH_SECRET,
-  trustedOrigins: [env.CLIENT_ORIGIN],
+  trustedOrigins: allowedOrigins,
+  // Slows credential stuffing and reset-email abuse. In-memory per process; use a shared store if the API is scaled out.
+  rateLimit: {
+    enabled: authRateLimitEnabled, window: 60, max: 100,
+    customRules: {
+      '/sign-in/email': { window: 60, max: 8 },
+      '/sign-up/email': { window: 60, max: 5 },
+      '/request-password-reset': { window: 60, max: 3 },
+      '/reset-password': { window: 60, max: 5 },
+    },
+  },
   database: prismaAdapter(db, { provider: 'postgresql' }),
   advanced: { database: { generateId: 'uuid' } },
   user: {

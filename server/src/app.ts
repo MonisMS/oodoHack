@@ -1,7 +1,8 @@
 import express from 'express';
 import cors from 'cors';
 import helmet from 'helmet';
-import { env } from './lib/env.js';
+import { allowedOrigins } from './lib/env.js';
+import { originGuard } from './middleware/origin-guard.js';
 import { AppError, errorHandler } from './lib/errors.js';
 import { toNodeHandler } from 'better-auth/node';
 import { auth } from './lib/auth.js';
@@ -9,7 +10,10 @@ import { registerModules } from './modules/index.js';
 export const app = express();
 app.disable('x-powered-by');
 app.use(helmet());
-app.use(cors({ origin: env.CLIENT_ORIGIN, credentials: true }));
+app.use(cors({ origin: allowedOrigins, credentials: true }));
+// Cookie sessions need CSRF defence in depth: a state-changing browser request from another origin is refused.
+// It also covers /api/auth: Better Auth only checks Origin when a cookie is already present, which would leave login CSRF open.
+app.use('/api', originGuard);
 // Better Auth owns every /api/auth/* route and must run before the JSON body parser.
 app.all('/api/auth/*splat', toNodeHandler(auth));
 app.use(express.json({ limit: '256kb' }));
