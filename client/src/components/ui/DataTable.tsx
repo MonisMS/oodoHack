@@ -1,2 +1,2 @@
-export { DataTable } from './kit';
-export type { Column } from './kit';
+export { DataTable } from "./kit";
+export type { Column } from "./kit";

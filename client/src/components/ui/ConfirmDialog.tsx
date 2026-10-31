@@ -1,1 +1,1 @@
-export { ConfirmDialog } from './kit';
+export { ConfirmDialog } from "./kit";

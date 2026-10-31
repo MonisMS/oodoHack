@@ -1,0 +1,228 @@
+{
+  "generatedAt": "2026-10-31T09:47:57.473Z",
+  "scope": "Loopback HTTP API including real cookie authentication and JSON serialization; seven sequential samples per endpoint, p95 reported as the conservative maximum of seven samples. Not an Internet/network/browser paint SLA.",
+  "fixtures": {
+    "customers": 300,
+    "subscriptions": 5000,
+    "invoices": 15000,
+    "payments": 15000,
+    "invoiceLines": 30000
+  },
+  "results": [
+    {
+      "endpoint": "/products",
+      "coldMs": 39.8,
+      "medianMs": 9.1,
+      "p95Ms": 39.8,
+      "under2s": true
+    },
+    {
+      "endpoint": "/plans",
+      "coldMs": 18.8,
+      "medianMs": 6,
+      "p95Ms": 18.8,
+      "under2s": true
+    },
+    {
+      "endpoint": "/discounts",
+      "coldMs": 7,
+      "medianMs": 5.7,
+      "p95Ms": 7,
+      "under2s": true
+    },
+    {
+      "endpoint": "/users/customers",
+      "coldMs": 14,
+      "medianMs": 5.4,
+      "p95Ms": 14,
+      "under2s": true
+    },
+    {
+      "endpoint": "/subscriptions",
+      "coldMs": 19.3,
+      "medianMs": 11.2,
+      "p95Ms": 19.3,
+      "under2s": true
+    },
+    {
+      "endpoint": "/subscriptions?page=250",
+      "coldMs": 13.8,
+      "medianMs": 12,
+      "p95Ms": 13.8,
+      "under2s": true
+    },
+    {
+      "endpoint": "/invoices",
+      "coldMs": 27,
+      "medianMs": 15,
+      "p95Ms": 27,
+      "under2s": true
+    },
+    {
+      "endpoint": "/payments",
+      "coldMs": 10.7,
+      "medianMs": 11.4,
+      "p95Ms": 14.2,
+      "under2s": true
+    },
+    {
+      "endpoint": "/reports/summary",
+      "coldMs": 30.1,
+      "medianMs": 25.4,
+      "p95Ms": 30.1,
+      "under2s": true
+    },
+    {
+      "endpoint": "/reports/summary?from=2026-07-01&to=2026-09-30&planId=<fixture-plan>",
+      "coldMs": 15.2,
+      "medianMs": 15.7,
+      "p95Ms": 16.6,
+      "under2s": true
+    }
+  ],
+  "queryPlan": [
+    {
+      "QUERY PLAN": [
+        {
+          "Plan": {
+            "Node Type": "Limit",
+            "Parallel Aware": false,
+            "Async Capable": false,
+            "Startup Cost": 48.46,
+            "Total Cost": 48.5,
+            "Plan Rows": 16,
+            "Plan Width": 20,
+            "Actual Startup Time": 0.048,
+            "Actual Total Time": 0.051,
+            "Actual Rows": 17,
+            "Actual Loops": 1,
+            "Disabled": false,
+            "Shared Hit Blocks": 19,
+            "Shared Read Blocks": 0,
+            "Shared Dirtied Blocks": 0,
+            "Shared Written Blocks": 0,
+            "Local Hit Blocks": 0,
+            "Local Read Blocks": 0,
+            "Local Dirtied Blocks": 0,
+            "Local Written Blocks": 0,
+            "Temp Read Blocks": 0,
+            "Temp Written Blocks": 0,
+            "Plans": [
+              {
+                "Node Type": "Sort",
+                "Parent Relationship": "Outer",
+                "Parallel Aware": false,
+                "Async Capable": false,
+                "Startup Cost": 48.46,
+                "Total Cost": 48.5,
+                "Plan Rows": 16,
+                "Plan Width": 20,
+                "Actual Startup Time": 0.048,
+                "Actual Total Time": 0.049,
+                "Actual Rows": 17,
+                "Actual Loops": 1,
+                "Disabled": false,
+                "Sort Key": [
+                  "\"nextInvoiceDate\"",
+                  "id"
+                ],
+                "Sort Method": "quicksort",
+                "Sort Space Used": 26,
+                "Sort Space Type": "Memory",
+                "Shared Hit Blocks": 19,
+                "Shared Read Blocks": 0,
+                "Shared Dirtied Blocks": 0,
+                "Shared Written Blocks": 0,
+                "Local Hit Blocks": 0,
+                "Local Read Blocks": 0,
+                "Local Dirtied Blocks": 0,
+                "Local Written Blocks": 0,
+                "Temp Read Blocks": 0,
+                "Temp Written Blocks": 0,
+                "Plans": [
+                  {
+                    "Node Type": "Bitmap Heap Scan",
+                    "Parent Relationship": "Outer",
+                    "Parallel Aware": false,
+                    "Async Capable": false,
+                    "Relation Name": "Subscription",
+                    "Alias": "s",
+                    "Startup Cost": 4.41,
+                    "Total Cost": 48.14,
+                    "Plan Rows": 16,
+                    "Plan Width": 20,
+                    "Actual Startup Time": 0.021,
+                    "Actual Total Time": 0.04,
+                    "Actual Rows": 17,
+                    "Actual Loops": 1,
+                    "Disabled": false,
+                    "Recheck Cond": "(\"customerId\" = 'd64831df-00e2-4fc7-9c95-6a3b00379676'::uuid)",
+                    "Rows Removed by Index Recheck": 0,
+                    "Exact Heap Blocks": 17,
+                    "Lossy Heap Blocks": 0,
+                    "Shared Hit Blocks": 19,
+                    "Shared Read Blocks": 0,
+                    "Shared Dirtied Blocks": 0,
+                    "Shared Written Blocks": 0,
+                    "Local Hit Blocks": 0,
+                    "Local Read Blocks": 0,
+                    "Local Dirtied Blocks": 0,
+                    "Local Written Blocks": 0,
+                    "Temp Read Blocks": 0,
+                    "Temp Written Blocks": 0,
+                    "Plans": [
+                      {
+                        "Node Type": "Bitmap Index Scan",
+                        "Parent Relationship": "Outer",
+                        "Parallel Aware": false,
+                        "Async Capable": false,
+                        "Index Name": "Subscription_customerId_status_idx",
+                        "Startup Cost": 0,
+                        "Total Cost": 4.4,
+                        "Plan Rows": 16,
+                        "Plan Width": 0,
+                        "Actual Startup Time": 0.012,
+                        "Actual Total Time": 0.012,
+                        "Actual Rows": 17,
+                        "Actual Loops": 1,
+                        "Disabled": false,
+                        "Index Cond": "(\"customerId\" = 'd64831df-00e2-4fc7-9c95-6a3b00379676'::uuid)",
+                        "Index Searches": 1,
+                        "Shared Hit Blocks": 2,
+                        "Shared Read Blocks": 0,
+                        "Shared Dirtied Blocks": 0,
+                        "Shared Written Blocks": 0,
+                        "Local Hit Blocks": 0,
+                        "Local Read Blocks": 0,
+                        "Local Dirtied Blocks": 0,
+                        "Local Written Blocks": 0,
+                        "Temp Read Blocks": 0,
+                        "Temp Written Blocks": 0
+                      }
+                    ]
+                  }
+                ]
+              }
+            ]
+          },
+          "Planning": {
+            "Shared Hit Blocks": 0,
+            "Shared Read Blocks": 0,
+            "Shared Dirtied Blocks": 0,
+            "Shared Written Blocks": 0,
+            "Local Hit Blocks": 0,
+            "Local Read Blocks": 0,
+            "Local Dirtied Blocks": 0,
+            "Local Written Blocks": 0,
+            "Temp Read Blocks": 0,
+            "Temp Written Blocks": 0
+          },
+          "Planning Time": 0.104,
+          "Triggers": [],
+          "Execution Time": 0.067
+        }
+      ]
+    }
+  ],
+  "passed": true
+}

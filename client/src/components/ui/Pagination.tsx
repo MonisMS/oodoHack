@@ -1,1 +1,1 @@
-export { Pagination } from './kit';
+export { Pagination } from "./kit";

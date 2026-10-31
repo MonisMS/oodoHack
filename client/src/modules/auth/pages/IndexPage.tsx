@@ -1,16 +1,278 @@
-import { useEffect,useState,type FormEvent } from 'react';
-import { Link,useLocation,useNavigate,useSearchParams } from 'react-router-dom';
-import { Brand } from '../../../components/layout/AppLayout';
-import { Button,FormField,Input } from '../../../components/ui/kit';
-import { Icon } from '../../../components/ui/Icon';
-import { PasswordInput } from '../../../components/ui/PasswordInput';
-import { useSession } from '../../../lib/session';
-import { errorsFrom,type Fields } from '../../../lib/catalog-client';
-import { authSchema } from '../validation';
-const content={login:{eyebrow:'YOUR WORKSPACE, TOGETHER',title:'Welcome back.',description:'Sign in to keep your subscription business moving.',button:'Sign in'},signup:{eyebrow:'A GOOD PLACE TO START',title:'Create your account.',description:'A little less admin. A lot more clarity.',button:'Create account'},forgot:{eyebrow:'LET’S GET YOU BACK IN',title:'Forgot your password?',description:'Enter your registered email and we’ll help you reset it.',button:'Send reset link'},reset:{eyebrow:'A FRESH START',title:'Choose a new password.',description:'Make it strong and keep it somewhere safe.',button:'Update password'}};
-export default function IndexPage(_props:{title?:string}){const location=useLocation();const mode=location.pathname==='/signup'?'signup':location.pathname==='/forgot-password'?'forgot':location.pathname==='/reset-password'?'reset':'login';return <AuthForm key={mode} mode={mode}/>;}
-function AuthForm({mode}:{mode:keyof typeof content}){const {status,role,signIn,signUp,requestReset,resetPassword}=useSession();const navigate=useNavigate();const location=useLocation();const [params]=useSearchParams();const [email,setEmail]=useState('');const [name,setName]=useState('');const [password,setPassword]=useState('');const [fields,setFields]=useState<Fields>({});const [error,setError]=useState('');const [pending,setPending]=useState(false);const [success,setSuccess]=useState(false);const c=content[mode];
- useEffect(()=>{if((mode==='login'||mode==='signup')&&status==='authenticated'){const from=(location.state as {from?:string}|null)?.from;const safe=from?.startsWith('/')&&!from.startsWith('//')?from:undefined;navigate(role==='CUSTOMER'?'/portal':safe??'/dashboard',{replace:true});}},[status,role,mode,navigate,location.state]);
- const submit=async(e:FormEvent)=>{e.preventDefault();setError('');const parsed=authSchema(mode).safeParse({name,email,password});if(!parsed.success){setFields(errorsFrom(parsed.error));return;}setFields({});if(mode==='reset'&&!params.get('token')){setError('This reset link is incomplete. Request a new link to continue.');return;}setPending(true);try{const input=parsed.data;const result=mode==='login'?await signIn({email:input.email,password:input.password}):mode==='signup'?await signUp(input):mode==='forgot'?await requestReset({email:input.email}):await resetPassword({token:params.get('token')!,password:input.password});if(!result.ok){setError(result.code==='INVALID_TOKEN'||result.code==='INVALID_RESET_TOKEN'?'This link has expired or was already used. Please request a new one.':result.message);setPending(false);}else if(mode==='forgot'||mode==='reset'){setSuccess(true);setPending(false);}}catch{setError('We couldn’t complete that request. Please try again.');setPending(false);}};
- return <div className="auth-layout"><aside className="auth-story"><Brand/><div className="auth-story-content"><div className="orbit-art" aria-hidden="true"><span/><span/><span/></div><p className="eyebrow">A LITTLE MORE CLARITY</p><h1>Your subscriptions.<br/>In good order.</h1><p>One considered workspace for your plans, customers and recurring revenue.</p></div><div className="auth-story-footer"><span>Brightloop Software</span><span>Made for the everyday.</span></div></aside><main className="auth-form-wrap"><div className="auth-form"><div className="auth-mobile-brand"><Brand/></div><p className="eyebrow">{c.eyebrow}</p>{success?<div className="auth-success"><span className="empty-icon"><Icon name={mode==='forgot'?'mail':'check'} size={25}/></span><h2>{mode==='forgot'?'Check your email.':'Password updated.'}</h2><p className="auth-subtitle">{mode==='forgot'?'If an account matches that address, a reset link will be sent. For your security, the response is the same for every email.':'Your new password is ready. Sign in to return to your workspace.'}</p><Link to="/login" className="btn btn-primary">Back to sign in<Icon name="arrow" size={14}/></Link></div>:<><h1>{c.title}</h1><p className="auth-subtitle">{c.description}</p><form onSubmit={submit} noValidate><div className="auth-fields">{mode==='signup'&&<FormField label="Full name" error={fields.name}><Input autoComplete="name" value={name} placeholder="Your name" onChange={e=>setName(e.target.value)}/></FormField>}{mode!=='reset'&&<FormField label="Email address" error={fields.email}><Input type="email" autoComplete="email" value={email} placeholder="you@company.com" onChange={e=>setEmail(e.target.value)}/></FormField>}{mode!=='forgot'&&<PasswordInput value={password} onChange={setPassword} checklist={mode!=='login'} autoComplete={mode==='login'?'current-password':'new-password'} error={fields.password}/>}</div>{error&&<div className="notice notice-error" role="alert"><Icon name="info" size={16}/><span>{error}{mode==='reset'&&<> <Link className="text-link" to="/forgot-password">Request a new link</Link></>}</span></div>}<Button type="submit" disabled={pending||((mode==='login'||mode==='signup')&&status==='loading')} style={{marginTop:25}}>{pending?'Please wait…':c.button}<Icon name="arrow" size={15}/></Button></form><div className="auth-links">{mode==='login'?<><span>New here? <Link className="text-link" to="/signup">Create an account</Link></span><Link className="text-link" to="/forgot-password">Forgot password?</Link></>:<Link className="text-link" to="/login">← Back to sign in</Link>}</div><p className="auth-footer"><Icon name="shield" size={12} style={{display:'inline-block',verticalAlign:'middle',marginRight:5}}/>Your account. Your subscriptions. Securely connected.</p></>}</div></main></div>;
+import { useEffect, useState, type FormEvent } from "react";
+import {
+  Link,
+  useLocation,
+  useNavigate,
+  useSearchParams,
+} from "react-router-dom";
+import { Brand } from "../../../components/layout/AppLayout";
+import { Button, FormField, Input } from "../../../components/ui/kit";
+import { Icon } from "../../../components/ui/Icon";
+import { PasswordInput } from "../../../components/ui/PasswordInput";
+import { useSession } from "../../../lib/session";
+import { errorsFrom, type Fields } from "../../../lib/catalog-client";
+import { authSchema } from "../validation";
+const content = {
+  login: {
+    eyebrow: "YOUR WORKSPACE, TOGETHER",
+    title: "Welcome back.",
+    description: "Sign in to keep your subscription business moving.",
+    button: "Sign in",
+  },
+  signup: {
+    eyebrow: "A GOOD PLACE TO START",
+    title: "Create your account.",
+    description: "A little less admin. A lot more clarity.",
+    button: "Create account",
+  },
+  forgot: {
+    eyebrow: "LET’S GET YOU BACK IN",
+    title: "Forgot your password?",
+    description: "Enter your registered email and we’ll help you reset it.",
+    button: "Send reset link",
+  },
+  reset: {
+    eyebrow: "A FRESH START",
+    title: "Choose a new password.",
+    description: "Make it strong and keep it somewhere safe.",
+    button: "Update password",
+  },
+};
+export default function IndexPage(_props: { title?: string }) {
+  const location = useLocation();
+  const mode =
+    location.pathname === "/signup"
+      ? "signup"
+      : location.pathname === "/forgot-password"
+        ? "forgot"
+        : location.pathname === "/reset-password"
+          ? "reset"
+          : "login";
+  return <AuthForm key={mode} mode={mode} />;
+}
+function AuthForm({ mode }: { mode: keyof typeof content }) {
+  const { status, role, signIn, signUp, requestReset, resetPassword } =
+    useSession();
+  const navigate = useNavigate();
+  const location = useLocation();
+  const [params] = useSearchParams();
+  const [email, setEmail] = useState("");
+  const [name, setName] = useState("");
+  const [password, setPassword] = useState("");
+  const [fields, setFields] = useState<Fields>({});
+  const [error, setError] = useState("");
+  const [pending, setPending] = useState(false);
+  const [success, setSuccess] = useState(false);
+  const c = content[mode];
+  useEffect(() => {
+    if ((mode === "login" || mode === "signup") && status === "authenticated") {
+      const from = (location.state as { from?: string } | null)?.from;
+      const safe =
+        from?.startsWith("/") && !from.startsWith("//") ? from : undefined;
+      navigate(role === "CUSTOMER" ? "/portal" : (safe ?? "/dashboard"), {
+        replace: true,
+      });
+    }
+  }, [status, role, mode, navigate, location.state]);
+  const submit = async (e: FormEvent) => {
+    e.preventDefault();
+    setError("");
+    const parsed = authSchema(mode).safeParse({ name, email, password });
+    if (!parsed.success) {
+      setFields(errorsFrom(parsed.error));
+      return;
+    }
+    setFields({});
+    if (mode === "reset" && !params.get("token")) {
+      setError(
+        "This reset link is incomplete. Request a new link to continue.",
+      );
+      return;
+    }
+    setPending(true);
+    try {
+      const input = parsed.data;
+      const result =
+        mode === "login"
+          ? await signIn({ email: input.email, password: input.password })
+          : mode === "signup"
+            ? await signUp(input)
+            : mode === "forgot"
+              ? await requestReset({ email: input.email })
+              : await resetPassword({
+                  token: params.get("token")!,
+                  password: input.password,
+                });
+      if (!result.ok) {
+        setError(
+          result.code === "INVALID_TOKEN" ||
+            result.code === "INVALID_RESET_TOKEN"
+            ? "This link has expired or was already used. Please request a new one."
+            : result.message,
+        );
+        setPending(false);
+      } else if (mode === "forgot" || mode === "reset") {
+        setSuccess(true);
+        setPending(false);
+      }
+    } catch {
+      setError("We couldn’t complete that request. Please try again.");
+      setPending(false);
+    }
+  };
+  return (
+    <div className="auth-layout">
+      <aside className="auth-story">
+        <Brand />
+        <div className="auth-story-content">
+          <div className="orbit-art" aria-hidden="true">
+            <span />
+            <span />
+            <span />
+          </div>
+          <p className="eyebrow">A LITTLE MORE CLARITY</p>
+          <h1>
+            Your subscriptions.
+            <br />
+            In good order.
+          </h1>
+          <p>
+            One considered workspace for your plans, customers and recurring
+            revenue.
+          </p>
+        </div>
+        <div className="auth-story-footer">
+          <span>Brightloop Software</span>
+          <span>Made for the everyday.</span>
+        </div>
+      </aside>
+      <main className="auth-form-wrap">
+        <div className="auth-form">
+          <div className="auth-mobile-brand">
+            <Brand />
+          </div>
+          <p className="eyebrow">{c.eyebrow}</p>
+          {success ? (
+            <div className="auth-success">
+              <span className="empty-icon">
+                <Icon name={mode === "forgot" ? "mail" : "check"} size={25} />
+              </span>
+              <h2>
+                {mode === "forgot" ? "Check your email." : "Password updated."}
+              </h2>
+              <p className="auth-subtitle">
+                {mode === "forgot"
+                  ? "If an account matches that address, a reset link will be sent. For your security, the response is the same for every email."
+                  : "Your new password is ready. Sign in to return to your workspace."}
+              </p>
+              <Link to="/login" className="btn btn-primary">
+                Back to sign in
+                <Icon name="arrow" size={14} />
+              </Link>
+            </div>
+          ) : (
+            <>
+              <h1>{c.title}</h1>
+              <p className="auth-subtitle">{c.description}</p>
+              <form onSubmit={submit} noValidate>
+                <div className="auth-fields">
+                  {mode === "signup" && (
+                    <FormField label="Full name" error={fields.name}>
+                      <Input
+                        autoComplete="name"
+                        value={name}
+                        placeholder="Your name"
+                        onChange={(e) => setName(e.target.value)}
+                      />
+                    </FormField>
+                  )}
+                  {mode !== "reset" && (
+                    <FormField label="Email address" error={fields.email}>
+                      <Input
+                        type="email"
+                        autoComplete="email"
+                        value={email}
+                        placeholder="you@company.com"
+                        onChange={(e) => setEmail(e.target.value)}
+                      />
+                    </FormField>
+                  )}
+                  {mode !== "forgot" && (
+                    <PasswordInput
+                      value={password}
+                      onChange={setPassword}
+                      checklist={mode !== "login"}
+                      autoComplete={
+                        mode === "login" ? "current-password" : "new-password"
+                      }
+                      error={fields.password}
+                    />
+                  )}
+                </div>
+                {error && (
+                  <div className="notice notice-error" role="alert">
+                    <Icon name="info" size={16} />
+                    <span>
+                      {error}
+                      {mode === "reset" && (
+                        <>
+                          {" "}
+                          <Link className="text-link" to="/forgot-password">
+                            Request a new link
+                          </Link>
+                        </>
+                      )}
+                    </span>
+                  </div>
+                )}
+                <Button
+                  type="submit"
+                  disabled={
+                    pending ||
+                    ((mode === "login" || mode === "signup") &&
+                      status === "loading")
+                  }
+                  style={{ marginTop: 25 }}
+                >
+                  {pending ? "Please wait…" : c.button}
+                  <Icon name="arrow" size={15} />
+                </Button>
+              </form>
+              <div className="auth-links">
+                {mode === "login" ? (
+                  <>
+                    <span>
+                      New here?{" "}
+                      <Link className="text-link" to="/signup">
+                        Create an account
+                      </Link>
+                    </span>
+                    <Link className="text-link" to="/forgot-password">
+                      Forgot password?
+                    </Link>
+                  </>
+                ) : (
+                  <Link className="text-link" to="/login">
+                    ← Back to sign in
+                  </Link>
+                )}
+              </div>
+              <p className="auth-footer">
+                <Icon
+                  name="shield"
+                  size={12}
+                  style={{
+                    display: "inline-block",
+                    verticalAlign: "middle",
+                    marginRight: 5,
+                  }}
+                />
+                Your account. Your subscriptions. Securely connected.
+              </p>
+            </>
+          )}
+        </div>
+      </main>
+    </div>
+  );
 }

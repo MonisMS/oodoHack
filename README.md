@@ -4,7 +4,7 @@ Foundation for a four-person hackathon team. React + Vite + TypeScript + Tailwin
 
 ## What works now
 
-Complete Prisma schema and migrations, API validators/role contracts, Better Auth sessions/users, quotation templates, subscriptions, invoices/payments, transactional numbering, shared frontend shell and typed client contracts. B's domain and billing engine are implemented; POST /api/billing/run executes transactional billing and subscription transitions use the financial schedule planner. The merged backend passes 196 tests, including real database races and a complete subscription/billing/payment flow. See [docs/B_IMPLEMENTATION.md](docs/B_IMPLEMENTATION.md) for financial behavior and verification. Catalog/reporting/portal handlers and feature screens remain assigned to their workstreams; some handlers still return 501. Completing B does not complete the whole application.
+Complete Prisma schema and migrations, API validators/role contracts, Better Auth sessions/users, quotation templates, subscriptions, invoices/payments, transactional numbering, shared frontend shell and typed client contracts. B's domain and billing engine are implemented; POST /api/billing/run executes transactional billing and subscription transitions use the financial schedule planner. The backend with Part C passes 205 tests, including real database races and a complete subscription/billing/payment flow. See [docs/B_IMPLEMENTATION.md](docs/B_IMPLEMENTATION.md) for financial behavior and verification. Part C adds working catalog administration, auth/accounts screens, a shared UI kit and SQL-backed dashboard/reporting. Tax and portal handlers and D's operational screens remain pending; their handlers/screens still expose honest unavailable states. See docs/C_IMPLEMENTATION.md for evidence and D handoff. Completing B does not complete the whole application.
 
 Read [API_CONTRACT.md](API_CONTRACT.md) and [TASKS.md](TASKS.md) before implementing. Their business decisions are deliberate shared contracts. The rebalanced ownership table in TASKS.md (mirrored in docs/TEAM_PLAN.md) is authoritative. All four members have Codex: Lead/A 35%, Monis/B 30%, Adit Chobe/C 18%, Ansh/D 17%. A/B retain critical backend decisions; C/D own substantial specified implementation work.
 
@@ -52,7 +52,7 @@ Web: http://localhost:5173. API health: http://localhost:4000/api/health. Vite p
 |---|---|
 | npm run dev | Express+Vite watch processes |
 | npm run typecheck | Both workspaces, including foundation tests/seed |
-| npm test | Unit/API/job checks; DB suites require TEST_DATABASE_URL, BILLING_TEST_DATABASE_URL and BILLING_FLOW_TEST_DATABASE_URL (see B handoff) |
+| npm test | Unit/API/job checks; DB suites require TEST_DATABASE_URL, BILLING_TEST_DATABASE_URL, BILLING_FLOW_TEST_DATABASE_URL and CATALOG_TEST_DATABASE_URL (see B handoff) |
 | npm run build | Server TS emit + browser production bundle |
 | npm run db:generate | Prisma client generation |
 | npm run db:migrate | Apply committed migrations; create dev migrations only as A |
