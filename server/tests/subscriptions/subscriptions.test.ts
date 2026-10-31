@@ -232,6 +232,131 @@ describe.skipIf(!TEST_DB)('templates and subscriptions (A-03)', () => {
     });
   });
 
+  describe('lifecycle: price lock, cancel at period end, seat changes (A-11)', () => {
+    const live = async (over: Record<string, unknown> = {}) => { const s = await createSub({ planId: flexPlan.id, startDate: iso(-10), lines: [{ productId: product.id, quantity: 1 }], ...over }); await activate(s.id); return s.id; };
+    const view = async (id: string) => (await staff.get(`/api/subscriptions/${id}`)).body.data;
+    const schedule = (id: string, b: Record<string, unknown> = {}) => staff.post(`/api/subscriptions/${id}/schedule-cancellation`).send(b);
+    const unschedule = (id: string) => staff.post(`/api/subscriptions/${id}/unschedule-cancellation`).send({});
+    const change = (id: string, lines: unknown[], extra: Record<string, unknown> = {}) => staff.post(`/api/subscriptions/${id}/change-lines`).send({ lines, ...extra });
+    const dayBefore = (d: string) => new Date(new Date(`${d}T00:00:00Z`).getTime() - 86_400_000).toISOString().slice(0, 10);
+
+    it('locks the plan price at creation, ignores later plan price changes, re-snapshots on edit and re-prices on renewal', async () => {
+      const p = await makePlan({ price: '10.00', closableEarly: true, renewable: true });
+      const s = await createSub({ planId: p.id, startDate: iso(-5), lines: [{ productId: product.id, quantity: 1 }] });
+      expect((s as unknown as { planPrice: string }).planPrice).toBe('10.00');
+      await db.plan.update({ where: { id: p.id }, data: { price: '99.00' } });
+      expect((await view(s.id)).planPrice).toBe('10.00'); // running subscriptions are grandfathered
+      const edited = await staff.put(`/api/subscriptions/${s.id}`).send(body({ planId: p.id, startDate: iso(-5), lines: [{ productId: product.id, quantity: 1 }] }));
+      expect(edited.body.data.planPrice).toBe('99.00'); // editing a draft re-snapshots the current fee
+      await db.plan.update({ where: { id: p.id }, data: { price: '120.00' } });
+      await activate(s.id); await settle(s.id); expect((await view(s.id)).planPrice).toBe('99.00');
+      expect((await move(s.id, 'CLOSED')).status).toBe(200);
+      const renewed = await move(s.id, 'ACTIVE', { renewalExpiryDate: iso(400) });
+      expect(renewed.body.data.planPrice).toBe('120.00'); // a new term picks up the current price
+    });
+
+    // Found by these tests: B's planSubscriptionTransition restarts at max(today, last invoice end), which is BEFORE startDate for a
+    // subscription that has not started yet; the database CHECK (nextInvoiceDate >= startDate) then turns resume/renew into a 500.
+    it.todo('resume/renew of a not-yet-started subscription must keep nextInvoiceDate >= startDate (needs a B fix)');
+
+    it('flags billingDue until billing has run', async () => {
+      const id = await live(); expect((await view(id)).billingDue).toBe(true);
+      await settle(id); expect((await view(id)).billingDue).toBe(false);
+      const future = await createSub({ startDate: iso(30) }); await activate(future.id); expect((await view(future.id)).billingDue).toBe(false);
+    });
+
+    it('cancels at period end: expiry moves to the last invoiced day, billing stops, the subscription auto-closes', async () => {
+      const id = await live();
+      const early = await schedule(id); expect(early.status).toBe(409); expect(early.body.error.code).toBe('BILLING_BACKLOG'); // due periods must be invoiced first
+      await settle(id);
+      const before = await view(id); const endsOn = dayBefore(before.nextInvoiceDate);
+      const r = await schedule(id, { reason: 'customer request' });
+      expect(r.status, JSON.stringify(r.body)).toBe(200);
+      expect(r.body.data).toMatchObject({ status: 'ACTIVE', cancelAtPeriodEnd: true, expiryDate: endsOn, nextInvoiceDate: before.nextInvoiceDate });
+      expect(r.body.data.history.at(-1)).toMatchObject({ fromStatus: 'ACTIVE', toStatus: 'ACTIVE', actorId: staffId });
+      expect(r.body.data.history.at(-1).reason).toMatch(/Cancellation scheduled: ends .*customer request/);
+      expect((await schedule(id)).status).toBe(409); // already scheduled
+      await settle(id, iso(90)); // far in the future: nothing more may be invoiced, then autoClose applies
+      const after = await db.subscription.findUniqueOrThrow({ where: { id }, include: { invoices: true } });
+      expect(after.status).toBe('CLOSED'); expect(after.invoices).toHaveLength(1);
+    });
+
+    it('withdraws a scheduled cancellation, restoring the original expiry, and billing carries on', async () => {
+      const id = await live(); await settle(id); await schedule(id);
+      const r = await unschedule(id);
+      expect(r.status, JSON.stringify(r.body)).toBe(200); expect(r.body.data).toMatchObject({ cancelAtPeriodEnd: false, expiryDate: null, status: 'ACTIVE' });
+      await settle(id, iso(75));
+      const row = await db.subscription.findUniqueOrThrow({ where: { id }, include: { invoices: true } });
+      expect(row.status).toBe('ACTIVE'); expect(row.invoices.length).toBeGreaterThanOrEqual(3);
+      expect((await unschedule(id)).status).toBe(409); // nothing scheduled any more
+    });
+
+    it('refuses to schedule when it makes no sense', async () => {
+      const strict = await createSub(); await activate(strict.id); await settle(strict.id);
+      expect((await schedule(strict.id)).body.error.message).toMatch(/does not allow ending before/); // plan.closableEarly = false
+      const draft = await createSub({ planId: flexPlan.id }); expect((await schedule(draft.id)).status).toBe(409);
+      const untouched = await createSub({ planId: flexPlan.id, startDate: iso(20) }); await activate(untouched.id);
+      expect((await schedule(untouched.id)).body.error.message).toMatch(/Nothing has been invoiced yet/);
+      const short = await live({ expiryDate: iso(12) }); await settle(short);
+      expect((await schedule(short)).body.error.message).toMatch(/already ends on/);
+    });
+
+    it('cannot withdraw after the end date has passed, and renewal clears a schedule', async () => {
+      const id = await live(); await settle(id); await schedule(id);
+      await db.subscription.update({ where: { id }, data: { expiryDate: new Date(iso(-1)) } });
+      expect((await unschedule(id)).body.error.message).toMatch(/already passed/);
+      await db.subscription.update({ where: { id }, data: { expiryDate: new Date(iso(30)) } });
+      expect((await move(id, 'CLOSED')).status).toBe(200);
+      const renewed = await move(id, 'ACTIVE', { renewalExpiryDate: iso(400) });
+      expect(renewed.body.data).toMatchObject({ cancelAtPeriodEnd: false, expiryDate: iso(400) });
+    });
+
+    it('lets exactly one of two concurrent cancellation schedules win', async () => {
+      const id = await live(); await settle(id);
+      const [a, b] = await Promise.all([schedule(id), schedule(id)]);
+      expect([a.status, b.status].sort()).toEqual([200, 409]);
+    });
+
+    it('changes seats from the NEXT invoice only; issued invoices stay frozen', async () => {
+      const id = await live();
+      const due = await change(id, [{ productId: product.id, quantity: 5 }]);
+      expect(due.status).toBe(409); expect(due.body.error.code).toBe('BILLING_BACKLOG'); // due periods would be re-priced
+      await settle(id);
+      const r = await change(id, [{ productId: product.id, variantId: odoo.id, quantity: 5 }], { reason: 'seat increase' });
+      expect(r.status, JSON.stringify(r.body)).toBe(200);
+      expect(r.body.data.lines).toHaveLength(1); expect(r.body.data.lines[0]).toMatchObject({ quantity: 5, unitPrice: '1560.00' });
+      expect(r.body.data.history.at(-1)).toMatchObject({ fromStatus: 'ACTIVE', toStatus: 'ACTIVE', actorId: staffId });
+      expect(r.body.data.history.at(-1).reason).toMatch(/Lines changed, effective from the next invoice.*seat increase/);
+      await settle(id, iso(40));
+      const invoices = await db.invoice.findMany({ where: { subscriptionId: id }, include: { lines: true }, orderBy: { periodStart: 'asc' } });
+      expect(invoices).toHaveLength(2);
+      const productLine = (i: (typeof invoices)[number]) => i.lines.find(l => l.productId === product.id)!;
+      expect([productLine(invoices[0]!).quantity, productLine(invoices[0]!).unitPrice.toFixed(2)]).toEqual([1, '1000.00']); // first invoice unchanged
+      expect([productLine(invoices[1]!).quantity, productLine(invoices[1]!).unitPrice.toFixed(2)]).toEqual([5, '1560.00']); // second uses the new seats
+    });
+
+    it('validates seat changes and only allows them in the right states', async () => {
+      const strict = await createSub(); await activate(strict.id); await settle(strict.id); // plan minimum is 2
+      expect((await change(strict.id, [{ productId: product.id, quantity: 1 }])).body.error.fields.lines[0]).toMatch(/minimum of 2/);
+      expect((await change(strict.id, [{ productId: crypto.randomUUID(), quantity: 3 }])).body.error.fields['lines.0.productId']).toBeDefined();
+      expect((await change(strict.id, [{ productId: product.id, quantity: 1000000, unitPrice: '999999999999.99' }])).status).toBe(422);
+      expect((await change(strict.id, [])).status).toBe(422);
+      const draft = await createSub(); expect((await change(draft.id, [{ productId: product.id, quantity: 2 }])).status).toBe(409);
+      const closed = await createSub({ planId: flexPlan.id, startDate: iso(15) }); await activate(closed.id); await move(closed.id, 'CLOSED');
+      expect((await change(closed.id, [{ productId: product.id, quantity: 2 }])).status).toBe(409);
+      const paused = await live(); await settle(paused); await move(paused, 'PAUSED');
+      expect((await change(paused, [{ productId: product.id, quantity: 4 }])).status).toBe(200); // adjusting seats while paused is fine
+    });
+
+    it('serialises concurrent seat changes into a consistent single line set', async () => {
+      const id = await live(); await settle(id);
+      const rs = await Promise.all([change(id, [{ productId: product.id, quantity: 2 }]), change(id, [{ productId: product.id, quantity: 3 }]), change(id, [{ productId: product.id, quantity: 4 }])]);
+      expect(rs.every(r => r.status === 200)).toBe(true);
+      const lines = await db.subscriptionLine.findMany({ where: { subscriptionId: id } });
+      expect(lines).toHaveLength(1); expect([2, 3, 4]).toContain(lines[0]!.quantity);
+    });
+  });
+
   describe('list, filters and access', () => {
     it('filters by status/customer/search, paginates and caps the page size', async () => {
       const s = await createSub(); await move(s.id, 'QUOTATION');

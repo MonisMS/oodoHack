@@ -65,21 +65,21 @@ enum PaymentMethod {
 }
 
 model User {
-  id                  String               @id @default(uuid()) @db.Uuid
-  email               String               @unique @db.VarChar(254)
-  name                String               @db.VarChar(120)
-  emailVerified       Boolean              @default(false)
-  image               String?
-  role                Role                 @default(CUSTOMER)
-  isActive            Boolean              @default(true)
-  createdAt           DateTime             @default(now())
-  updatedAt           DateTime             @updatedAt
-  sessions            Session[]
-  accounts            Account[]
-  subscriptions       Subscription[]
-  invoices            Invoice[]
-  subscriptionEvents  SubscriptionEvent[]
-  recordedPayments    Payment[]            @relation("RecordedPayments")
+  id                 String              @id @default(uuid()) @db.Uuid
+  email              String              @unique @db.VarChar(254)
+  name               String              @db.VarChar(120)
+  emailVerified      Boolean             @default(false)
+  image              String?
+  role               Role                @default(CUSTOMER)
+  isActive           Boolean             @default(true)
+  createdAt          DateTime            @default(now())
+  updatedAt          DateTime            @updatedAt
+  sessions           Session[]
+  accounts           Account[]
+  subscriptions      Subscription[]
+  invoices           Invoice[]
+  subscriptionEvents SubscriptionEvent[]
+  recordedPayments   Payment[]           @relation("RecordedPayments")
 
   @@index([role, isActive])
 }
@@ -268,27 +268,33 @@ model QuotationTemplateLine {
 }
 
 model Subscription {
-  id                 String              @id @default(uuid()) @db.Uuid
-  number             String              @unique
-  customerId         String              @db.Uuid
-  planId             String              @db.Uuid
-  templateId         String?             @db.Uuid
-  status             SubscriptionStatus  @default(DRAFT)
-  startDate          DateTime            @db.Date
-  expiryDate         DateTime?           @db.Date
-  nextInvoiceDate    DateTime            @db.Date
-  billingAnchorDay   Int
-  billingAnchorMonth Int
-  paymentTermsDays   Int                 @default(0)
-  notes              String?
-  createdAt          DateTime            @default(now())
-  updatedAt          DateTime            @updatedAt
-  customer           User                @relation(fields: [customerId], references: [id], onDelete: Restrict)
-  plan               Plan                @relation(fields: [planId], references: [id], onDelete: Restrict)
-  template           QuotationTemplate?  @relation(fields: [templateId], references: [id], onDelete: Restrict)
-  lines              SubscriptionLine[]
-  invoices           Invoice[]
-  history            SubscriptionEvent[]
+  id                       String              @id @default(uuid()) @db.Uuid
+  number                   String              @unique
+  customerId               String              @db.Uuid
+  planId                   String              @db.Uuid
+  templateId               String?             @db.Uuid
+  status                   SubscriptionStatus  @default(DRAFT)
+  startDate                DateTime            @db.Date
+  expiryDate               DateTime?           @db.Date
+  nextInvoiceDate          DateTime            @db.Date
+  billingAnchorDay         Int
+  billingAnchorMonth       Int
+  paymentTermsDays         Int                 @default(0)
+  notes                    String?
+  // Plan fee locked when the subscription is created (and re-priced on renewal). Plan price changes never alter running
+  // subscriptions (grandfathering). Null on legacy rows: billing falls back to the plan's current price.
+  planPrice                Decimal?            @db.Decimal(14, 2)
+  // Cancellation scheduled for the end of the paid period: expiryDate was moved up and the original is kept to undo it.
+  cancelScheduledAt        DateTime?
+  expiryBeforeCancellation DateTime?           @db.Date
+  createdAt                DateTime            @default(now())
+  updatedAt                DateTime            @updatedAt
+  customer                 User                @relation(fields: [customerId], references: [id], onDelete: Restrict)
+  plan                     Plan                @relation(fields: [planId], references: [id], onDelete: Restrict)
+  template                 QuotationTemplate?  @relation(fields: [templateId], references: [id], onDelete: Restrict)
+  lines                    SubscriptionLine[]
+  invoices                 Invoice[]
+  history                  SubscriptionEvent[]
 
   @@index([status, nextInvoiceDate])
   @@index([customerId, status])
@@ -349,6 +355,8 @@ model Invoice {
   amountPaid     Decimal         @default(0) @db.Decimal(14, 2)
   currency       String          @default("INR") @db.Char(3)
   sentAt         DateTime?
+  lastReminderAt DateTime?
+  reminderCount  Int             @default(0)
   createdAt      DateTime        @default(now())
   updatedAt      DateTime        @updatedAt
   subscription   Subscription    @relation(fields: [subscriptionId], references: [id], onDelete: Restrict)

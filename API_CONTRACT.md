@@ -64,11 +64,18 @@ All request shapes are named Zod schemas reproduced below. `—` means no body/q
 | PUT | /api/subscriptions/:id | ADMIN, STAFF | subscriptionInput | — | idParams | 200 Data<Subscription> |
 | DELETE | /api/subscriptions/:id | ADMIN, STAFF | — | — | idParams | 204 empty |
 | POST | /api/subscriptions/:id/transition | ADMIN, STAFF | transitionInput | — | idParams | 200 Data<Subscription> |
+| POST | /api/subscriptions/:id/schedule-cancellation | ADMIN, STAFF | cancellationInput | — | idParams | 200 Data<Subscription> |
+| POST | /api/subscriptions/:id/unschedule-cancellation | ADMIN, STAFF | cancellationInput | — | idParams | 200 Data<Subscription> |
+| POST | /api/subscriptions/:id/change-lines | ADMIN, STAFF | changeLinesInput | — | idParams | 200 Data<Subscription> |
 | GET | /api/invoices | ADMIN, STAFF | — | invoiceQuery | — | 200 Page<Invoice> |
 | GET | /api/invoices/:id | ADMIN, STAFF | — | — | idParams | 200 Data<Invoice> |
 | POST | /api/invoices/:id/confirm | ADMIN, STAFF | — | — | idParams | 200 Data<Invoice> |
 | POST | /api/invoices/:id/cancel | ADMIN, STAFF | — | — | idParams | 200 Data<Invoice> |
 | POST | /api/invoices/:id/send | ADMIN, STAFF | — | — | idParams | 200 Data<Invoice> |
+| POST | /api/invoices/:id/remind | ADMIN, STAFF | — | — | idParams | 200 Data<Invoice> |
+| POST | /api/invoices/confirm | ADMIN, STAFF | bulkInvoiceInput | — | — | 200 Data<BulkResult> |
+| POST | /api/invoices/send | ADMIN, STAFF | bulkInvoiceInput | — | — | 200 Data<BulkResult> |
+| POST | /api/invoices/remind | ADMIN, STAFF | bulkInvoiceInput | — | — | 200 Data<BulkResult> |
 | POST | /api/billing/run | ADMIN, STAFF | billingInput | — | — | 200 Data<BillingResult> |
 | GET | /api/payments | ADMIN, STAFF | — | paymentQuery | — | 200 Page<Payment> |
 | POST | /api/payments | ADMIN, STAFF | paymentInput | — | — | 201 Data<Payment> |
@@ -109,6 +116,13 @@ Transition uses a transaction, locks/rechecks current status, writes Subscriptio
 **A-04 additions:** every Invoice response includes `outstanding` (`total - amountPaid` for CONFIRMED/PARTIALLY_PAID, else `"0.00"`) and `overdue` (open AND `dueDate` < today UTC) so every screen shows identical derived values. Payment errors: overpayment and future date are 422 with a field error; a non-payable invoice status is 409. `send` returns 502 `EMAIL_FAILED` when delivery fails and leaves `sentAt` null. Server code reuses `toInvoiceDto`/`invoiceInclude` from `modules/invoices/service.ts` (the portal must add its own ownership filter).
 
 **A-10 safety rules (server-enforced):** free-text fields reject NUL characters (422); a subscription line total may not exceed 1,000,000,000.00 and a subscription total 10,000,000,000.00; `startDate` must be within two years in the past and five years ahead, `expiryDate` within 20 years of `startDate` (422 with a field error); a payment `date` may not be in the future (judged on the **business calendar date**, `BUSINESS_TZ`, default Asia/Kolkata) nor before the invoice `issueDate`. `PUT /api/users/:id` (ADMIN) renames or (de)activates STAFF/CUSTOMER accounts; administrator accounts are never editable (409), deactivation revokes every session at once, and a customer with ACTIVE/PAUSED subscriptions cannot be deactivated (409).
+
+**A-11 subscription lifecycle (server-enforced):**
+- **Price lock (grandfathering).** `Subscription.planPrice` snapshots the plan fee at creation/edit and is re-priced only on renewal; later plan price changes never alter a running subscription. *Billing must read `planPrice` (falling back to the plan's price for legacy rows) - tracked as a B task.*
+- **Cancel at period end.** `schedule-cancellation` (ACTIVE only, plan must allow early closing, no billing due) moves `expiryDate` to the last invoiced day and keeps the original in `expiryBeforeCancellation`; `unschedule-cancellation` restores it until the end date passes. DTO exposes `cancelAtPeriodEnd`. Billing stops at expiry and autoClose plans close afterwards. Renewal clears a schedule.
+- **Change seats/products.** `change-lines` (CONFIRMED/ACTIVE/PAUSED) replaces the lines from the NEXT invoice, no proration, rejected while billing is due so due periods are never re-priced. Each change writes a history event with the same from/to status.
+- **`billingDue`** (DTO): ACTIVE with `nextInvoiceDate` already reached; screens should offer billing before pause/close/cancel/change.
+- **Invoices:** `remind` (and bulk `/remind`) emails a payment reminder for OVERDUE invoices only, at most once per 24 hours (`lastReminderAt`, `reminderCount` on the invoice); bulk `confirm`/`send`/`remind` take up to 100 ids and return `{succeeded, failed:[{id,code,message}]}`, each invoice processed independently.
 
 ### Billing, taxes and discounts
 

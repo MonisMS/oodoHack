@@ -11,6 +11,9 @@ const handlers: Record<string, RequestHandler> = {
   'GET /:id': async (req, res) => { res.json({ data: await service.get(res.locals.validated.params.id, req.user!) }); },
   'PUT /:id': async (req, res) => { res.json({ data: await service.replace(res.locals.validated.params.id, res.locals.validated.body, req.user!) }); },
   'DELETE /:id': async (req, res) => { await service.remove(res.locals.validated.params.id, req.user!); res.status(204).end(); },
+  'POST /:id/schedule-cancellation': async (req, res) => { res.json({ data: await service.scheduleCancellation(res.locals.validated.params.id, res.locals.validated.body, req.user!) }); },
+  'POST /:id/unschedule-cancellation': async (req, res) => { res.json({ data: await service.unscheduleCancellation(res.locals.validated.params.id, res.locals.validated.body, req.user!) }); },
+  'POST /:id/change-lines': async (req, res) => { res.json({ data: await service.changeLines(res.locals.validated.params.id, res.locals.validated.body, req.user!) }); },
   'POST /:id/transition': async (req, res) => { res.json({ data: await service.transition(res.locals.validated.params.id, res.locals.validated.body, req.user!) }); },
 };
 
