@@ -27,3 +27,10 @@ Ownership update: the current TASKS.md / docs/TEAM_PLAN.md supersedes the origin
 - No business seed/demo logins exist until D implements the seed.
 - C receives auth.ts + client session.tsx behind their existing interfaces. B receives new UI kit files; A retains PageHeader/EmptyState. D receives seed.ts. Shared root dependency/lockfile edits go through A.
 - Contract or schema changes after foundation-v1 go through A with migrations and synchronized DTO/validator updates.
+
+## Progress (2026-10-31)
+
+- **A-02 done** (branch `feat/A-core`, pushed): Better Auth cookie sessions, real requireAuth/requireRole, active-user check, CUSTOMER-only signup, ADMIN-only staff creation, users listing, client `useSession()`, password policy hook, reset flow; 29 tests incl. production guards. Reset token is stored by Better Auth (Verification table), not SHA-256 hashed as the old contract said.
+- **A-01 in progress** (branch `feat/A-01-contracts`): session interface published, fixture IDs in `server/src/lib/fixtures.ts`, domain signatures proposed in `docs/A-01-agreements.md` — waiting for Monis (B) to confirm section 3.
+- Local test DB: tests run with `TEST_DATABASE_URL` pointing at a disposable local PostgreSQL (skipped otherwise).
+
