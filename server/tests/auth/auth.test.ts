@@ -77,6 +77,17 @@ describe.skipIf(!TEST_DB)('Better Auth integration', () => {
     await expect(createCredentialUser({ name: 'Bad', email: unique('bad'), password: 'weak', role: 'STAFF' })).rejects.toThrow();
   });
 
+  it('createCredentialUser can create a user with a fixed id that signs in like a real account', async () => {
+    const fixedId = crypto.randomUUID(); const email = unique('fixed');
+    const user = await createCredentialUser({ id: fixedId, name: 'Fixed Id', email, password: GOOD, role: 'CUSTOMER' });
+    expect(user.id).toBe(fixedId);
+    const agent = request.agent(app); expect((await signIn(agent, email, GOOD)).status).toBe(200);
+    expect((await agent.get('/api/auth/get-session')).body.user.id).toBe(fixedId);
+    // atomic: a duplicate email must not leave a half-created account behind
+    await expect(createCredentialUser({ name: 'Dup', email, password: GOOD, role: 'STAFF' })).rejects.toThrow();
+    expect(await db.account.count({ where: { userId: fixedId } })).toBe(1);
+  });
+
   it('blocks deactivated users from signing in and from using an existing session', async () => {
     const email = unique('inactive'); const agent = request.agent(app);
     await signUp(agent, { name: 'Ina Ctive', email, password: GOOD });

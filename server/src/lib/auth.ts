@@ -64,13 +64,16 @@ export const auth = betterAuth({
 /**
  * Creates a user with a credential login without going through public signup.
  * Used for ADMIN-created staff and for seeding (so seeded logins hash exactly like real ones).
+ * User and credential account are written in one transaction; pass `id` for fixed fixture ids.
  */
-export async function createCredentialUser(input: { name: string; email: string; password: string; role: 'ADMIN' | 'STAFF' | 'CUSTOMER' }) {
+export async function createCredentialUser(input: { name: string; email: string; password: string; role: 'ADMIN' | 'STAFF' | 'CUSTOMER'; id?: string }) {
   const parsed = passwordPolicy.safeParse(input.password);
   if (!parsed.success) throw new APIError('BAD_REQUEST', { message: parsed.error.issues[0]?.message ?? 'Password does not meet the policy', code: 'WEAK_PASSWORD' });
   const ctx = await auth.$context;
   const hash = await ctx.password.hash(input.password);
-  const user = await ctx.internalAdapter.createUser({ name: input.name, email: input.email.trim().toLowerCase(), emailVerified: true, role: input.role, isActive: true }, { method: 'admin' });
-  await ctx.internalAdapter.linkAccount({ userId: user.id, providerId: 'credential', accountId: user.id, password: hash });
-  return user;
+  return db.$transaction(async tx => {
+    const user = await tx.user.create({ data: { ...(input.id ? { id: input.id } : {}), name: input.name, email: input.email.trim().toLowerCase(), emailVerified: true, role: input.role, isActive: true } });
+    await tx.account.create({ data: { userId: user.id, providerId: 'credential', accountId: user.id, password: hash } });
+    return user;
+  });
 }

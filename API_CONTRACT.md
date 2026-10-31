@@ -146,12 +146,9 @@ remove(id: string, actor: Principal): Promise<void>
 createVariant(productId: string, input: VariantInput, actor: Principal): Promise<ProductVariant>
 replaceVariant(productId: string, variantId: string, input: VariantInput, actor: Principal): Promise<ProductVariant>
 removeVariant(productId: string, variantId: string, actor: Principal): Promise<void>
-// Auth A (C implements client screens):
-signup(input: SignupInput): Promise<AuthSession>
-login(input: LoginInput): Promise<AuthSession>
-getMe(actor: Principal): Promise<User>
-requestReset(input: ForgotPasswordInput): Promise<Message>
-resetPassword(input: ResetPasswordInput): Promise<Message>
+// Auth A: Better Auth handles signup/login/session/reset at /api/auth/*; no service exports here.
+// Client screens (C) use useSession() from client/src/lib/session.tsx. Server code needing a user with a
+// credential login (staff, seed) calls createCredentialUser() from server/src/lib/auth.ts.
 // User module A (C implements client screens):
 listCustomers(query: ListQuery, actor: Principal): Promise<Page<User>>
 listStaff(query: ListQuery, actor: Principal): Promise<Page<User>>

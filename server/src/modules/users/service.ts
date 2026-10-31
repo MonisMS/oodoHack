@@ -3,6 +3,7 @@ import { db } from '../../lib/db.js';
 import { AppError } from '../../lib/errors.js';
 import { createCredentialUser } from '../../lib/auth.js';
 import type { z } from 'zod';
+import type { Principal } from '../../middleware/auth.js';
 import type { listQuery, staffInput } from './schemas.js';
 
 type ListQuery = z.infer<typeof listQuery>;
@@ -25,11 +26,12 @@ async function listByRole(roles: Role[], q: ListQuery) {
   return { data: rows.map(toUserDto), page: q.page, pageSize: q.pageSize, total };
 }
 
-export const listCustomers = (q: ListQuery) => listByRole(['CUSTOMER'], q);
-export const listStaff = (q: ListQuery) => listByRole(['STAFF', 'ADMIN'], q);
+// Public service exports follow the contract: every export takes the acting principal (routes also guard roles).
+export const listCustomers = (q: ListQuery, _actor: Principal) => listByRole(['CUSTOMER'], q);
+export const listStaff = (q: ListQuery, _actor: Principal) => listByRole(['STAFF', 'ADMIN'], q);
 
 /** ADMIN-only (enforced by the route). The new account is always STAFF. */
-export async function createStaff(input: StaffInput) {
+export async function createStaff(input: StaffInput, _actor: Principal) {
   const email = input.email.trim().toLowerCase();
   if (await db.user.findUnique({ where: { email }, select: { id: true } })) throw new AppError(409, 'CONFLICT', 'An account with this email already exists');
   try {
