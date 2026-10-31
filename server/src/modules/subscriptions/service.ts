@@ -2,6 +2,7 @@ import type { Prisma, SubscriptionStatus } from '@prisma/client';
 import type { z } from 'zod';
 import { db } from '../../lib/db.js';
 import { AppError } from '../../lib/errors.js';
+import { lockRow } from '../../lib/locks.js';
 import { nextNumber } from '../../lib/numbers.js';
 import { addDays, assertCustomer, assertPlanSelectable, dateOnly, parseDate, resolveLines, todayUtc, totalQuantity, type LineIn, type Tx } from '../../lib/catalog-lines.js';
 import type { Principal } from '../../middleware/auth.js';
@@ -42,10 +43,7 @@ const schedule = (startDate: string) => {
   return { startDate: start, nextInvoiceDate: start, billingAnchorDay: start.getUTCDate(), billingAnchorMonth: start.getUTCMonth() + 1 };
 };
 
-async function lock(tx: Tx, id: string) {
-  const rows = await tx.$queryRaw<Array<{ id: string }>>`SELECT id FROM "Subscription" WHERE id = ${id}::uuid FOR UPDATE`;
-  if (rows.length === 0) throw new AppError(404, 'NOT_FOUND', 'Subscription not found');
-}
+const lock = (tx: Tx, id: string) => lockRow(tx, 'Subscription', id, 'Subscription not found');
 
 /** Validates customer, plan, lines and (for create) assigns the number. Returns the data for nested line creation. */
 async function validate(tx: Tx, input: NewSubscription) {

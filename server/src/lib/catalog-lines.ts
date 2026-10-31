@@ -1,5 +1,6 @@
 import { Prisma, type Plan } from '@prisma/client';
 import { AppError } from './errors.js';
+import { dateOnly } from './dates.js';
 
 // Shared by quotation templates and subscriptions (both owned by A). Rules come from API_CONTRACT.md
 // "Catalog, templates and subscription editing"; pure money/period policy lives in lib/domain (B).
@@ -7,10 +8,8 @@ export type Tx = Prisma.TransactionClient;
 export interface LineIn { productId: string; variantId: string | null; quantity: number; unitPrice?: string }
 export interface ResolvedLine { productId: string; variantId: string | null; description: string; quantity: number; unitPrice: string | null }
 
-export const dateOnly = (d: Date) => d.toISOString().slice(0, 10);
-export const parseDate = (s: string) => new Date(`${s}T00:00:00.000Z`);
-export const addDays = (s: string, days: number) => dateOnly(new Date(parseDate(s).getTime() + days * 86_400_000));
-export const todayUtc = () => dateOnly(new Date());
+// Re-exported so existing imports keep working; the helpers live in lib/dates.ts.
+export { addDays, dateOnly, parseDate, todayUtc } from './dates.js';
 
 function invalid(fields: Record<string, string[]>): never {
   throw new AppError(422, 'VALIDATION_ERROR', 'Check the submitted fields', fields);
