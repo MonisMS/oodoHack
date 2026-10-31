@@ -18,7 +18,7 @@ import { routes as module12 } from './modules/portal/routes';
 function Home() {
   const { role, status } = useSession();
   if (status === 'loading') return <p role="status">Loading...</p>; // do not bounce a signed-in user to /login while the session loads
-  return <Navigate to={role === 'CUSTOMER' ? '/portal' : role ? '/dashboard' : '/login'} replace />;
+  return <Navigate to={status !== 'authenticated' ? '/login' : role === 'CUSTOMER' ? '/portal' : '/dashboard'} replace />;
 }
 export const router = createBrowserRouter([{ element: <AppLayout />, children: [
   { index: true, element: <Home /> },
