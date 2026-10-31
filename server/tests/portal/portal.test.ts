@@ -158,6 +158,7 @@ describe.skipIf(!TEST_DB)('customer portal (D-06)', () => {
       const due = await newSub(aliceId, flex.id); await db.subscription.update({ where: { id: due }, data: { nextInvoiceDate: new Date(iso(-1)) } });
       const settled = await cancel(alice, due); expect(settled.status, JSON.stringify(settled.body)).toBe(200); expect(settled.body.data.cancelAtPeriodEnd).toBe(true);
       expect(await db.invoice.count({ where: { subscriptionId: due } })).toBeGreaterThanOrEqual(1);
+      await db.subscription.update({ where: { id: due }, data: { status: 'CLOSED' } }); // leave nothing billable behind for suites running in parallel on this database
     });
   });
 
