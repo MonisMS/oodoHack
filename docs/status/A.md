@@ -21,6 +21,8 @@
 
 ## Remaining verification and handoff
 
+Ownership update: the current TASKS.md / docs/TEAM_PLAN.md supersedes the original A/B/C/D handoff allocation below. This status records the foundation snapshot; the rebalanced plan retains A/B decision authority.
+
 - Local PostgreSQL is not installed in this WSL distro, and no local Docker socket is available. Migration SQL was generated/inspected, not applied to a live database. Use README setup, then npm run db:migrate; feature owners must run their financial/concurrency integration tests against an isolated local test database.
 - No business seed/demo logins exist until D implements the seed.
 - C receives auth.ts + client session.tsx behind their existing interfaces. B receives new UI kit files; A retains PageHeader/EmptyState. D receives seed.ts. Shared root dependency/lockfile edits go through A.

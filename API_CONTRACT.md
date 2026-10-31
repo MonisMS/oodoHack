@@ -1,12 +1,12 @@
 # API contract — foundation v1
 
-Owner: Person A. Frozen when the verified foundation commit is shared. Schema or contract changes go through A and include a migration if needed. This contract describes the target implementation; foundation feature handlers intentionally return 501.
+Contract editor: Lead (A), with Monis (B) retaining financial/domain decision authority. Ownership follows TASKS.md; C is Adit Chobe and D is Ansh. Frozen when the verified foundation commit is shared. Schema or contract changes go through A and include a migration if needed. This contract describes the target implementation; foundation feature handlers intentionally return 501.
 
 ## Transport and access
 
 - Base `/api`; JSON request/response; no trailing slash required. IDs are UUIDs. Dates are UTC calendar `YYYY-MM-DD`; timestamps are ISO 8601 UTC. One currency, INR. Money uses major-unit decimal strings with exactly two digits (`"560.00"`), never JSON floats; percentage strings have up to four decimal places. Internally calculate in integer paise or exact Decimal, round half up per line, and check numeric bounds before saving.
-- C implements JWT Bearer auth (`Authorization: Bearer <token>`), 8-hour expiry, with database active-user lookup on protected requests. Signup always creates CUSTOMER; ADMIN alone creates STAFF. Password >8 characters, uppercase, lowercase, non-whitespace special, at most 72 UTF-8 bytes for bcrypt. Normalize email to lowercase/trim before lookup/write. Logout discards the stateless token on the client; no refresh token or immediate token revocation in v1.
-- Until C replaces `server/src/middleware/auth.ts`, dev auth requires `DEV_AUTH_ENABLED=true`, UUID `x-dev-user-id` and enum `x-dev-role`. It is refused in production, provides no real authentication, and must only run on a trusted development machine. Both `requireAuth` and `requireRole(...roles)` retain their signatures and set `req.user: {id, role}`.
+- A implements JWT Bearer auth (`Authorization: Bearer <token>`), 8-hour expiry, with database active-user lookup on protected requests. Signup always creates CUSTOMER; ADMIN alone creates STAFF. Password >8 characters, uppercase, lowercase, non-whitespace special, at most 72 UTF-8 bytes for bcrypt. Normalize email to lowercase/trim before lookup/write. Logout discards the stateless token on the client; no refresh token or immediate token revocation in v1.
+- Until A replaces `server/src/middleware/auth.ts`, dev auth requires `DEV_AUTH_ENABLED=true`, UUID `x-dev-user-id` and enum `x-dev-role`. It is refused in production, provides no real authentication, and must only run on a trusted development machine. Both `requireAuth` and `requireRole(...roles)` retain their signatures and set `req.user: {id, role}`.
 - Roles in the endpoint table are exhaustive. No implicit ADMIN override for CUSTOMER-only portal routes. Portal services derive customerId only from the principal and apply it in EVERY list/detail query. A missing or foreign-owned portal record returns 404. No customer filter is accepted on portal queries.
 - List response is `{data: T[], page: number, pageSize: number, total: number}`. Other JSON success responses use `{data: T}`. DELETE/logout return 204 with no body. PUT is complete replacement of writable fields, not PATCH. Omitted optional fields receive the documented Zod defaults. Relations and immutable server-managed values never come from request bodies.
 - All errors: `{error: {code: string, message: string, fields?: Record<string,string[]>}}`. Status codes: 400 INVALID_JSON; 401 UNAUTHENTICATED / INVALID_CREDENTIALS / INVALID_RESET_TOKEN; 403 FORBIDDEN; 404 NOT_FOUND; 409 CONFLICT / INVALID_TRANSITION / RELATION_CONFLICT / LIMIT_REACHED; 413 PAYLOAD_TOO_LARGE; 422 VALIDATION_ERROR; 501 NOT_IMPLEMENTED; 500 INTERNAL_ERROR. Do not leak hashes/tokens/stack traces. Expired/used reset tokens are invalid. Forgot-password always returns the same neutral success, including unknown emails.
@@ -109,7 +109,7 @@ Transition uses a transaction, locks/rechecks current status, writes Subscriptio
 
 Within that same transaction: create numbered invoice and immutable lines/customer snapshot, increment eligible discount counters and create DiscountUsage records, then advance nextInvoiceDate. Use `nextNumber(tx,'INV',year)` and `nextNumber(tx,'SUB',year)`, never count+1. Invoice issueDate=asOfDate; dueDate=issueDate+paymentTermsDays. SQL unique(subscriptionId,periodStart) is mandatory. Concurrent runs lock subscriptions and use conditional atomic discount increments; serialize/retry deadlocks and Prisma P2034 boundedly. A P2002 invoice-period collision rolls back the whole subscription transaction and is reported skipped only after rereading confirms another committed run advanced the cursor; other unique errors are failures, not silently swallowed. Failed subscriptions roll back invoices/counters/cursor and do not stop others.
 
-Max 24 catch-up periods by default prevents an unbounded transaction. Return hasMore when eligible periods remain; repeated runs drain them. created counts invoices; skipped counts subscriptions which create none after recheck; failed counts failed subscriptions; autoClosed counts subscriptions closed. A daily node-cron UTC job invokes this same service, logs failures, and drains hasMore in bounded batches. Cron may only auto-close an expired autoClose subscription after ALL due periods through expiry are billed; never close first and lose historical charges. Configure scheduler in A's later billing task (currently disabled).
+Max 24 catch-up periods by default prevents an unbounded transaction. Return hasMore when eligible periods remain; repeated runs drain them. created counts invoices; skipped counts subscriptions which create none after recheck; failed counts failed subscriptions; autoClosed counts subscriptions closed. B implements a daily node-cron UTC job that invokes this same service, logs failures, and drains hasMore in bounded batches. Cron may only auto-close an expired autoClose subscription after ALL due periods through expiry are billed; never close first and lose historical charges. Configure scheduler in B's billing task with A's shared startup integration (currently disabled).
 
 Tax per charge line: round-half-up(quantity × unitPrice × percentage / 100) for each tax. Save `{taxId,name,percentage,amount}` snapshots on InvoiceLine.taxes; changes to product prices/tax rules/discounts/customer names cannot mutate old invoices. No invoice line editing API in v1.
 
@@ -127,11 +127,11 @@ Reports: all filters are combined. Subscription count uses current subscription 
 
 ### Auth/reset details
 
-Reset: generate cryptographically random token, store SHA-256 hash only, 30-minute expiry, one-time atomic consumption with password update. Never put the raw reset token in a JSON response. Development email delivery may log the reset link. Delete/mark older unused reset tokens on a new request. C owns client validation with the same password rules. Apply login/reset rate limiting before demo deployment as SHOULD, avoiding auth feature expansion in the foundation.
+Reset: generate cryptographically random token, store SHA-256 hash only, 30-minute expiry, one-time atomic consumption with password update. Never put the raw reset token in a JSON response. Development email delivery may log the reset link. Delete/mark older unused reset tokens on a new request. C implements the auth forms and mirrored client validation; A owns authentication/reset persistence and session security. Apply login/reset rate limiting before demo deployment as SHOULD, avoiding auth feature expansion in the foundation.
 
 ## Server service boundaries (target exports; not implemented in foundation)
 
-Controllers read `res.locals.validated.{body,query,params}`, pass only parsed input plus principal, and return the envelopes above. Each owner implements exports in their own module's service.ts. Other modules may import these public exports only, never controllers, schemas, or private helpers. A owns the database singleton and transaction-aware shared helpers. D's reports use direct read-only aggregate queries through db.
+Controllers read `res.locals.validated.{body,query,params}`, pass only parsed input plus principal, and return the envelopes above. Each owner implements exports in their own module's service.ts. Other modules may import these public exports only, never controllers, schemas, or private helpers. A owns the database singleton and transaction-aware shared helpers. C's reports use direct read-only aggregate queries through db. A owns critical subscription/invoice/payment/auth services; B owns pure domain and billing services; C owns specified catalog/discount/report services; D owns specified tax/portal services and email/seed implementation.
 
 ```ts
 // Inputs/DTOs refer to the exact transport types below. Role checks remain on routes AND sensitive services.
@@ -146,13 +146,13 @@ remove(id: string, actor: Principal): Promise<void>
 createVariant(productId: string, input: VariantInput, actor: Principal): Promise<ProductVariant>
 replaceVariant(productId: string, variantId: string, input: VariantInput, actor: Principal): Promise<ProductVariant>
 removeVariant(productId: string, variantId: string, actor: Principal): Promise<void>
-// Auth C:
+// Auth A (C implements client screens):
 signup(input: SignupInput): Promise<AuthSession>
 login(input: LoginInput): Promise<AuthSession>
 getMe(actor: Principal): Promise<User>
 requestReset(input: ForgotPasswordInput): Promise<Message>
 resetPassword(input: ResetPasswordInput): Promise<Message>
-// User module C:
+// User module A (C implements client screens):
 listCustomers(query: ListQuery, actor: Principal): Promise<Page<User>>
 listStaff(query: ListQuery, actor: Principal): Promise<Page<User>>
 createStaff(input: StaffInput, actor: Principal): Promise<User>
@@ -164,7 +164,7 @@ replace(id: string, input: SubscriptionInput, actor: Principal): Promise<Subscri
 remove(id: string, actor: Principal): Promise<void>
 createFromTemplate(input: FromTemplateInput, actor: Principal): Promise<Subscription>
 transition(id: string, input: TransitionInput, actor: Principal): Promise<Subscription>
-// Billing A: HTTP route performs role guard; scheduler supplies no impersonated user.
+// Billing B: HTTP route performs role guard; scheduler supplies no impersonated user.
 runBilling(input: BillingInput): Promise<BillingResult>
 // Pure helpers use integer paise (safe integers); fractional rates use decimal strings.
 computeLineTax(baseMinor: number, percentage: string): number
@@ -177,11 +177,11 @@ get(id: string, actor: Principal): Promise<Invoice>
 confirm(id: string, actor: Principal): Promise<Invoice>
 cancel(id: string, actor: Principal): Promise<Invoice>
 send(id: string, actor: Principal): Promise<Invoice>
-// Payments/reports D:
+// Payments A / reports C:
 list(query: PaymentQuery, actor: Principal): Promise<Page<Payment>>
 recordPayment(input: PaymentInput, actor: Principal): Promise<Payment>
 summary(query: ReportQuery, actor: Principal): Promise<ReportSummary>
-// Portal C; customer derived from actor in every export:
+// Portal D (A reviews the ownership boundary); customer derived from actor in every export:
 summary(actor: Principal): Promise<PortalSummary>
 listSubscriptions(query: PortalSubscriptionQuery, actor: Principal): Promise<Page<Subscription>>
 getSubscription(id: string, actor: Principal): Promise<Subscription>
