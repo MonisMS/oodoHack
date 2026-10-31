@@ -50,6 +50,29 @@ export default function IndexPage(_props: { title?: string }) {
           : "login";
   return <AuthForm key={mode} mode={mode} />;
 }
+// One-click demo sign-in for testers and judges. Shown only when VITE_DEMO_LOGINS=true (the seeded demo accounts; never enable on real data).
+const DEMO_PASSWORD = "Brightloop!2026";
+const DEMO_ACCOUNTS = [
+  { label: "Admin", email: "admin@brightloop.local", note: "Everything" },
+  { label: "Staff", email: "priya@brightloop.local", note: "Day-to-day billing" },
+  { label: "Customer", email: "billing@acme.example", note: "Portal only" },
+] as const;
+function DemoLogins({ disabled, onPick }: { disabled: boolean; onPick: (email: string, password: string) => void }) {
+  if (import.meta.env.VITE_DEMO_LOGINS !== "true") return null;
+  return (
+    <section aria-label="Demo accounts" style={{ marginTop: 24, paddingTop: 18, borderTop: "1px solid rgba(128,128,128,.25)" }}>
+      <p className="eyebrow" style={{ marginBottom: 10 }}>TRY A DEMO ACCOUNT</p>
+      <div style={{ display: "grid", gap: 8, gridTemplateColumns: "repeat(auto-fit, minmax(110px, 1fr))" }}>
+        {DEMO_ACCOUNTS.map((a) => (
+          <button key={a.label} type="button" className="btn" disabled={disabled} onClick={() => onPick(a.email, DEMO_PASSWORD)} title={a.email} style={{ flexDirection: "column", alignItems: "flex-start", gap: 2, textAlign: "left" }}>
+            <strong>Log in as {a.label}</strong>
+            <span className="small muted">{a.note}</span>
+          </button>
+        ))}
+      </div>
+    </section>
+  );
+}
 function AuthForm({ mode }: { mode: keyof typeof content }) {
   const { status, role, signIn, signUp, requestReset, resetPassword } =
     useSession();
@@ -117,6 +140,18 @@ function AuthForm({ mode }: { mode: keyof typeof content }) {
       }
     } catch {
       setError("We couldn’t complete that request. Please try again.");
+      setPending(false);
+    }
+  };
+  const demoLogin = async (demoEmail: string, demoPassword: string) => {
+    setError("");
+    setFields({});
+    setEmail(demoEmail);
+    setPassword(demoPassword);
+    setPending(true);
+    const result = await signIn({ email: demoEmail, password: demoPassword });
+    if (!result.ok) {
+      setError(result.code === "INVALID_EMAIL_OR_PASSWORD" ? "The demo accounts are not set up on this server. Run the seed (npm run db:seed)." : result.message);
       setPending(false);
     }
   };
@@ -238,6 +273,7 @@ function AuthForm({ mode }: { mode: keyof typeof content }) {
                   <Icon name="arrow" size={15} />
                 </Button>
               </form>
+              {mode === "login" && <DemoLogins disabled={pending || status === "loading"} onPick={demoLogin} />}
               <div className="auth-links">
                 {mode === "login" ? (
                   <>
