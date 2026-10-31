@@ -1,0 +1,10 @@
+@tailwind base;
+@tailwind components;
+@tailwind utilities;
+body { @apply m-0 bg-slate-50 font-sans text-slate-900 antialiased; }
+button, a, select, input { @apply focus-visible:outline focus-visible:outline-2 focus-visible:outline-offset-2 focus-visible:outline-brand-600; }
+@media print {
+  aside, header, .no-print { display: none !important; }
+  body { background: white; }
+  main { max-width: none !important; padding: 0 !important; }
+}

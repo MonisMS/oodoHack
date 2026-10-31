@@ -1,0 +1,13 @@
+import { moduleRouter } from '../../lib/module-router.js';
+import { controller } from './controller.js';
+import * as s from './schemas.js';
+export default moduleRouter([
+  { method: 'get', path: '/', roles: ["ADMIN", "STAFF"], query: s.listQuery },
+  { method: 'post', path: '/', roles: ["ADMIN"], body: s.productInput },
+  { method: 'get', path: '/:id', roles: ["ADMIN", "STAFF"], params: s.idParams },
+  { method: 'put', path: '/:id', roles: ["ADMIN"], body: s.productInput, params: s.idParams },
+  { method: 'delete', path: '/:id', roles: ["ADMIN"], params: s.idParams },
+  { method: 'post', path: '/:id/variants', roles: ["ADMIN"], body: s.variantInput, params: s.idParams },
+  { method: 'put', path: '/:id/variants/:variantId', roles: ["ADMIN"], body: s.variantInput, params: s.variantParams },
+  { method: 'delete', path: '/:id/variants/:variantId', roles: ["ADMIN"], params: s.variantParams }
+], controller);
