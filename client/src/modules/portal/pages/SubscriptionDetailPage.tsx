@@ -1,16 +1,13 @@
 import { useState } from 'react';
 import { useParams } from 'react-router-dom';
 import { PageHeader } from '../../../components/ui/PageHeader';
-import { Button, Card, DataTable, Facts, Notice, StatusBadge, type Column } from '../../../components/ops/ui';
+import { Button, Card, Facts, Notice, StatusBadge } from '../../../components/ops/ui';
+import { SubscriptionCharges } from '../../../components/ops/SubscriptionCharges';
 import { BILLING_PERIOD_LABEL, date, dateTime, money } from '../../../components/ops/format';
-import type { SubscriptionLine } from '../../../types/api';
 import { usePortalSubscription } from '../api';
 import { BackLink, QueryState } from '../components/Shared';
 import { CancelModal, KeepModal } from '../components/CancellationModals';
 
-const lineColumns: Column<SubscriptionLine>[] = [
-  { header: 'Description', cell: l => l.description }, { header: 'Qty', align: 'right', cell: l => l.quantity }, { header: 'Unit price', align: 'right', cell: l => money(l.unitPrice) },
-];
 
 export default function SubscriptionDetailPage() {
   const { id = '' } = useParams();
@@ -36,7 +33,7 @@ export default function SubscriptionDetailPage() {
         [sub.cancelAtPeriodEnd ? 'Last day of service' : 'Next invoice', sub.cancelAtPeriodEnd ? date(sub.expiryDate) : date(sub.nextInvoiceDate)],
         ['Payment terms', `${sub.paymentTermsDays} days`],
       ]} /></Card>
-      <Card title="What is included"><DataTable caption="Subscription items" columns={lineColumns} rows={sub.lines} rowKey={l => l.id} empty="No items." /></Card>
+      <Card title="What is included"><SubscriptionCharges sub={sub} /></Card>
       <Card title="History">
         {sub.history.length === 0 ? <p className="text-sm text-slate-500">No changes yet.</p> : <ol className="space-y-3 border-l-2 border-slate-200 pl-4">
           {sub.history.map(h => <li key={h.id} className="text-sm"><span className="flex flex-wrap items-center gap-2"><StatusBadge status={h.fromStatus} /><span aria-hidden="true">→</span><span className="sr-only">changed to</span><StatusBadge status={h.toStatus} /></span><span className="mt-1 block text-xs text-slate-500">{dateTime(h.createdAt)}</span></li>)}</ol>}

@@ -41,7 +41,7 @@ export default function SubscriptionListPage() {
           { header: 'Number', cell: s => <Link to={`/subscriptions/${s.id}`} className="font-medium text-brand-700 hover:underline" onClick={e => e.stopPropagation()}>{s.number}</Link> },
           { header: 'Customer', cell: s => <><div>{s.customerName}</div><div className="text-xs text-slate-500">{s.customerEmail}</div></> },
           { header: 'Plan', cell: s => s.planName },
-          { header: 'Status', cell: s => <div className="flex flex-wrap items-center gap-1.5"><StatusBadge status={s.status} />{s.billingDue && <StatusBadge status="BILLING_DUE" tone="amber" />}{s.cancelAtPeriodEnd && <StatusBadge status="ENDS_AT_PERIOD_END" tone="red" />}</div> },
+          { header: 'Status', cell: s => <div className="flex flex-wrap items-center gap-1.5"><StatusBadge status={s.status} />{s.billingDue && <StatusBadge status="BILLING_DUE" tone="amber" />}{s.cancelAtPeriodEnd && <StatusBadge status="ENDS_AT_PERIOD_END" tone="red" />}{s.quotationExpired && <StatusBadge status="QUOTE_EXPIRED" tone="red" />}</div> },
           { header: 'Start', cell: s => date(s.startDate) },
           { header: 'Next invoice', cell: s => date(s.nextInvoiceDate) },
         ]} />

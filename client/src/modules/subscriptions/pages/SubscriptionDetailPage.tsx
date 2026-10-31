@@ -4,7 +4,8 @@ import { PageHeader } from '../../../components/ui/PageHeader';
 import { ErrorNotice } from '../../../components/ops/errors';
 import { date, label, money } from '../../../components/ops/format';
 import { BILLING_PERIOD_LABEL } from '../../../components/ops/format';
-import { Button, Card, DataTable, Facts, Notice, Spinner, StatusBadge } from '../../../components/ops/ui';
+import { Button, Card, Facts, Notice, Spinner, StatusBadge } from '../../../components/ops/ui';
+import { SubscriptionCharges } from '../../../components/ops/SubscriptionCharges';
 import { useSubscription } from '../api';
 import { ActionDialogs, transitionLabel, type Dialog } from '../components/ActionDialogs';
 import { Timeline } from '../components/Timeline';
@@ -23,6 +24,8 @@ export default function SubscriptionDetailPage() {
     <PageHeader title={sub.number} description={`${sub.customerName} · ${sub.customerEmail}`} actions={<div className="flex items-center gap-2"><StatusBadge status={sub.status} />{sub.cancelAtPeriodEnd && <StatusBadge status="ENDS_AT_PERIOD_END" tone="red" />}</div>} />
     <div className="space-y-5">
       {sub.billingDue && <Notice tone="warning" title="Billing is due">Pausing, closing, scheduling the end or changing lines will first invoice the periods that are already due. <Link className="underline" to={`/invoices?customerId=${sub.customerId}`}>View invoices</Link></Notice>}
+      {sub.quotationExpired && <Notice tone="warning" title={`This quotation expired on ${date(sub.quotationValidUntil)}`}>It can no longer be confirmed. Edit it to re-issue the quotation with a fresh validity period, or close it.</Notice>}
+      {sub.status === 'QUOTATION' && !sub.quotationExpired && sub.quotationValidUntil && <Notice tone="info" title={`Quotation valid until ${date(sub.quotationValidUntil)}`}>The customer can accept it up to and including that date.</Notice>}
       {sub.cancelAtPeriodEnd && <Notice tone="info" title="This subscription ends at the end of the current period">Service continues until {date(sub.expiryDate)} and nothing further is billed.</Notice>}
       <Card title="Actions"><div className="flex flex-wrap gap-2">
         {sub.allowedTransitions.map(to => <Button key={to} variant={to === 'CLOSED' ? 'danger' : 'primary'} onClick={() => setDialog({ kind: 'transition', to })}>{transitionLabel(sub.status, to)}</Button>)}
@@ -39,16 +42,12 @@ export default function SubscriptionDetailPage() {
         ['Start date', date(sub.startDate)],
         [sub.cancelAtPeriodEnd ? 'Ends' : 'Expiry date', date(sub.expiryDate)],
         ['Next invoice', date(sub.nextInvoiceDate)],
+        ['Quotation validity', sub.quotationValidUntil ? `Until ${date(sub.quotationValidUntil)}` : sub.quotationValidityDays ? `${sub.quotationValidityDays} days after it is sent` : '—'],
         ['Payment terms', `${sub.paymentTermsDays} days`],
         ['Template', sub.templateId ? <Link key="t" className="text-brand-700 hover:underline" to={`/quotation-templates/${sub.templateId}`}>View template</Link> : '—'],
         ['Notes', sub.notes ?? '—'],
       ]} /></Card>
-      <Card title="Lines"><DataTable caption="Subscription lines" rows={sub.lines} rowKey={l => l.id} empty="This subscription has no lines."
-        columns={[
-          { header: 'Description', cell: l => l.description },
-          { header: 'Quantity', align: 'right', cell: l => l.quantity },
-          { header: 'Unit price', align: 'right', cell: l => money(l.unitPrice) },
-        ]} /></Card>
+      <Card title="Lines"><SubscriptionCharges sub={sub} /></Card>
       <Card title="History"><Timeline events={sub.history} /></Card>
       <p className="text-sm"><Link to="/subscriptions" className="text-brand-700 hover:underline">Back to subscriptions</Link></p>
     </div>
