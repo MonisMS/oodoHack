@@ -26,7 +26,7 @@ describe.skipIf(!TEST_DB)('invoices and payments (A-04)', () => {
       data: {
         number: o.number ?? `INV/T/${uid()}`, subscriptionId, customerId, status: (o.status ?? 'DRAFT') as never,
         periodStart: new Date(`${2000 + (seq % 90)}-01-${String((seq % 27) + 1).padStart(2, '0')}`), periodEnd: new Date('2099-01-01'),
-        issueDate: new Date(o.issueDate ?? shift(o.dueDate ?? iso(10), -5)), dueDate: new Date(o.dueDate ?? iso(10)),
+        issueDate: new Date(o.issueDate ?? ((o.dueDate ?? iso(10)) < iso(-5) ? shift(o.dueDate as string, -5) : iso(-5))), dueDate: new Date(o.dueDate ?? iso(10)),
         customerName: o.customerName ?? customerName, customerEmail: o.customerEmail ?? 'billing@example.com',
         subtotal: total, taxTotal: '0.00', total, amountPaid: o.amountPaid ?? '0.00',
         lines: { create: [{ kind: 'CHARGE', description: 'CRM - Brand: Odoo', quantity: 1, unitPrice: total, subtotal: total, taxTotal: '0.00', total, taxes: [{ taxId: crypto.randomUUID(), name: 'GST 18%', percentage: '18.0000', amount: '0.00' }], position: 0 }] },

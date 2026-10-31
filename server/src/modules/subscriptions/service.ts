@@ -5,7 +5,7 @@ import { AppError } from '../../lib/errors.js';
 import { lockRow } from '../../lib/locks.js';
 import { nextNumber } from '../../lib/numbers.js';
 import { planSubscriptionTransition } from '../../lib/domain/states.js';
-import { addDays, assertCustomer, assertPlanSelectable, dateOnly, parseDate, resolveLines, todayUtc, totalQuantity, type LineIn, type Tx } from '../../lib/catalog-lines.js';
+import { addDays, assertCustomer, assertPlanSelectable, assertScheduleBounds, dateOnly, parseDate, resolveLines, todayBusiness, totalQuantity, type LineIn, type Tx } from '../../lib/catalog-lines.js';
 import type { Principal } from '../../middleware/auth.js';
 import { allowedTransitions, canTransition, needsRevalidation } from './rules.js';
 import type { fromTemplateInput, subscriptionInput, subscriptionQuery, transitionInput } from './schemas.js';
@@ -33,7 +33,7 @@ export function toSubscriptionDto(s: Row) {
     billingAnchorDay: s.billingAnchorDay, billingAnchorMonth: s.billingAnchorMonth, paymentTermsDays: s.paymentTermsDays, notes: s.notes,
     lines: s.lines.map(l => ({ id: l.id, subscriptionId: l.subscriptionId, productId: l.productId, variantId: l.variantId, description: l.description, quantity: l.quantity, unitPrice: l.unitPrice.toFixed(2), position: l.position })),
     history: s.history.map(e => ({ id: e.id, subscriptionId: e.subscriptionId, fromStatus: e.fromStatus, toStatus: e.toStatus, actorId: e.actorId, reason: e.reason, createdAt: e.createdAt.toISOString() })),
-    allowedTransitions: allowedTransitions(s.status, { plan: s.plan, expiryDate, today: todayUtc() }),
+    allowedTransitions: allowedTransitions(s.status, { plan: s.plan, expiryDate, today: todayBusiness() }),
     createdAt: s.createdAt.toISOString(), updatedAt: s.updatedAt.toISOString(),
   };
 }
@@ -48,6 +48,7 @@ const lock = (tx: Tx, id: string) => lockRow(tx, 'Subscription', id, 'Subscripti
 
 /** Validates customer, plan, lines and (for create) assigns the number. Returns the data for nested line creation. */
 async function validate(tx: Tx, input: NewSubscription) {
+  assertScheduleBounds(input.startDate, input.expiryDate);
   await assertCustomer(tx, input.customerId);
   const [plan, lines] = await Promise.all([tx.plan.findUnique({ where: { id: input.planId } }), resolveLines(tx, input.lines, 'freeze')]);
   assertPlanSelectable(plan, input.startDate, totalQuantity(lines));
@@ -56,7 +57,7 @@ async function validate(tx: Tx, input: NewSubscription) {
 
 async function insert(tx: Tx, input: NewSubscription, templateId: string | null) {
   const lines = await validate(tx, input);
-  const number = await nextNumber(tx, 'SUB', Number(todayUtc().slice(0, 4)));
+  const number = await nextNumber(tx, 'SUB', Number(todayBusiness().slice(0, 4)));
   const created = await tx.subscription.create({
     data: { number, customerId: input.customerId, planId: input.planId, templateId, status: 'DRAFT', ...schedule(input.startDate), expiryDate: input.expiryDate ? parseDate(input.expiryDate) : null, paymentTermsDays: input.paymentTermsDays, notes: input.notes ?? null, lines: { create: lines } },
     select: { id: true },
@@ -136,7 +137,7 @@ export async function transition(id: string, input: TransitionInput, actor: Prin
     const sub = await tx.subscription.findUniqueOrThrow({ where: { id }, include: { plan: true, lines: true } });
     const from: SubscriptionStatus = sub.status;
     const expiryDate = sub.expiryDate ? dateOnly(sub.expiryDate) : null;
-    const check = canTransition(from, input.to, { plan: sub.plan, expiryDate, today: todayUtc(), renewalExpiryDate: input.renewalExpiryDate ?? null });
+    const check = canTransition(from, input.to, { plan: sub.plan, expiryDate, today: todayBusiness(), renewalExpiryDate: input.renewalExpiryDate ?? null });
     if (!check.ok) throw new AppError(409, 'INVALID_TRANSITION', check.reason);
     if (needsRevalidation(from, input.to)) {
       if (sub.lines.length === 0) throw new AppError(422, 'VALIDATION_ERROR', 'Check the submitted fields', { lines: ['A subscription needs at least one line'] });
@@ -145,7 +146,7 @@ export async function transition(id: string, input: TransitionInput, actor: Prin
     }
     const coverage = await tx.invoice.aggregate({ where: { subscriptionId: id }, _max: { periodEnd: true } });
     const change = planSubscriptionTransition(from,input.to,{
-      plan:sub.plan,expiryDate,today:todayUtc(),renewalExpiryDate:input.renewalExpiryDate,
+      plan:sub.plan,expiryDate,today:todayBusiness(),renewalExpiryDate:input.renewalExpiryDate,
       nextInvoiceDate:dateOnly(sub.nextInvoiceDate),billingAnchorDay:sub.billingAnchorDay,billingAnchorMonth:sub.billingAnchorMonth,
       lastInvoicePeriodEnd:coverage._max.periodEnd ? dateOnly(coverage._max.periodEnd) : null,
     });

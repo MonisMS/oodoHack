@@ -6,10 +6,14 @@ import { dateOnly } from './dates.js';
 // "Catalog, templates and subscription editing"; pure money/period policy lives in lib/domain (B).
 export type Tx = Prisma.TransactionClient;
 export interface LineIn { productId: string; variantId: string | null; quantity: number; unitPrice?: string }
+// Sanity limits so a typo cannot create money that the database (NUMERIC(14,2)) or billing cannot represent.
+export const MAX_LINE_TOTAL = new Prisma.Decimal('1000000000'); // 100 crore per line
+export const MAX_SUBSCRIPTION_TOTAL = new Prisma.Decimal('10000000000');
 export interface ResolvedLine { productId: string; variantId: string | null; description: string; quantity: number; unitPrice: string | null }
 
 // Re-exported so existing imports keep working; the helpers live in lib/dates.ts.
-export { addDays, dateOnly, parseDate, todayUtc } from './dates.js';
+export { addDays, dateOnly, parseDate, todayUtc, todayBusiness } from './dates.js';
+import { addDays, todayBusiness } from './dates.js';
 
 function invalid(fields: Record<string, string[]>): never {
   throw new AppError(422, 'VALIDATION_ERROR', 'Check the submitted fields', fields);
@@ -47,6 +51,14 @@ export async function resolveLines(tx: Tx, lines: LineIn[], mode: 'freeze' | 'in
     const description = product ? `${product.name}${variant ? ` - ${variant.attribute}: ${variant.value}` : ''}` : '';
     return { productId: line.productId, variantId: line.variantId, description, quantity: line.quantity, unitPrice };
   });
+  let running = new Prisma.Decimal(0);
+  resolved.forEach((line, index) => {
+    if (line.unitPrice === null) return;
+    const lineTotal = new Prisma.Decimal(line.unitPrice).times(line.quantity);
+    if (lineTotal.gt(MAX_LINE_TOTAL)) fail(`lines.${index}.quantity`, `Line total ${lineTotal.toFixed(2)} exceeds the maximum of ${MAX_LINE_TOTAL.toFixed(2)}`);
+    running = running.plus(lineTotal);
+  });
+  if (running.gt(MAX_SUBSCRIPTION_TOTAL)) fail('lines', `Subscription total exceeds the maximum of ${MAX_SUBSCRIPTION_TOTAL.toFixed(2)}`);
   if (Object.keys(fields).length) invalid(fields);
   return resolved;
 }
@@ -67,3 +79,11 @@ export async function assertCustomer(tx: Tx, customerId: string) {
 }
 
 export const totalQuantity = (lines: Array<{ quantity: number }>) => lines.reduce((sum, l) => sum + l.quantity, 0);
+
+/** Start may be backdated up to two years or scheduled up to five years ahead; expiry at most 20 years after start. */
+export function assertScheduleBounds(startDate: string, expiryDate: string | null) {
+  const today = todayBusiness(); const fields: Record<string, string[]> = {};
+  if (startDate < addDays(today, -730) || startDate > addDays(today, 365 * 5)) fields.startDate = ['Start date must be within two years in the past and five years ahead'];
+  if (expiryDate && expiryDate > addDays(startDate, 365 * 20)) fields.expiryDate = ['Expiry date must be within 20 years of the start date'];
+  if (Object.keys(fields).length) invalid(fields);
+}
