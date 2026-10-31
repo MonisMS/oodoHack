@@ -12,7 +12,7 @@ describe('foundation boundaries', () => {
   it('registers the billing route but reports unfinished business logic honestly', async () => { const r = await request(app).post('/api/billing/run').set(devHeaders).send({ asOfDate: '2026-10-31' }); expect(r.status).toBe(501); expect(r.body.error.code).toBe('NOT_IMPLEMENTED'); });
   it('caps pagination and provides field errors', async () => { const r = await request(app).get('/api/subscriptions?pageSize=10000').set(devHeaders); expect(r.status).toBe(422); expect(r.body.error.fields.pageSize).toBeDefined(); });
   it('validates UUID params and blocks forged customer filters in the portal', async () => { expect((await request(app).get('/api/subscriptions/not-a-uuid').set(devHeaders)).status).toBe(422); const r = await request(app).get('/api/portal/invoices?customerId=00000000-0000-4000-8000-000000000002').set({ ...devHeaders, 'x-dev-role': 'CUSTOMER' }); expect(r.status).toBe(422); });
-  it('handles malformed JSON with the shared error format', async () => { const r = await request(app).post('/api/auth/login').set('Content-Type','application/json').send('{'); expect(r.status).toBe(400); expect(r.body.error.code).toBe('INVALID_JSON'); });
+  it('handles malformed JSON with the shared error format', async () => { const r = await request(app).post('/api/products').set(devHeaders).set('Content-Type','application/json').send('{'); expect(r.status).toBe(400); expect(r.body.error.code).toBe('INVALID_JSON'); });
   it('uses uniform not-found errors', async () => { const r = await request(app).get('/api/missing'); expect(r.status).toBe(404); expect(r.body.error.code).toBe('NOT_FOUND'); });
 });
 describe('frozen input contracts', () => {
