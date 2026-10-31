@@ -28,6 +28,7 @@ All request shapes are named Zod schemas reproduced below. `—` means no body/q
 | GET | /api/users/customers | ADMIN, STAFF | — | customerQuery | — | 200 Page<User> |
 | GET | /api/users/staff | ADMIN | — | listQuery | — | 200 Page<User> |
 | POST | /api/users/staff | ADMIN | staffInput | — | — | 201 Data<User> |
+| PUT | /api/users/:id | ADMIN | userUpdateInput | — | idParams | 200 Data<User> |
 | GET | /api/products | ADMIN, STAFF | — | listQuery | — | 200 Page<Product> |
 | POST | /api/products | ADMIN | productInput | — | — | 201 Data<Product> |
 | GET | /api/products/:id | ADMIN, STAFF | — | — | idParams | 200 Data<Product> |
@@ -106,6 +107,8 @@ Subscription create is DRAFT, nextInvoiceDate=startDate, billingAnchorDay/month 
 Transition uses a transaction, locks/rechecks current status, writes SubscriptionEvent. ActorId is the authenticated staff/admin (null for cron). Same-state transitions are 409. User-approved policy, 31 October 2026: paused/closed gaps are NOT charged. A calls B's pure planSubscriptionTransition helper under the subscription lock. Before ACTIVE→PAUSED/CLOSED, any due active-service backlog must be invoiced; otherwise return 409 BILLING_BACKLOG rather than discarding debt. On PAUSED/CLOSED→ACTIVE, nextInvoiceDate is the later of today and the latest issued invoice periodEnd, and day/month anchors reset to that date. This preserves already-issued coverage without double charging it; issued invoices are not rewritten, credited or prorated. Renewal sets the approved new expiry. A must supply the latest issued period end and persist the helper result + audit event atomically. B refuses a stale post-resume cursor with SCHEDULE_RECONCILIATION_REQUIRED, so an incorrectly integrated transition cannot charge the waived gap. Expired PAUSED autoClose subscriptions close without new charges.
 
 **A-04 additions:** every Invoice response includes `outstanding` (`total - amountPaid` for CONFIRMED/PARTIALLY_PAID, else `"0.00"`) and `overdue` (open AND `dueDate` < today UTC) so every screen shows identical derived values. Payment errors: overpayment and future date are 422 with a field error; a non-payable invoice status is 409. `send` returns 502 `EMAIL_FAILED` when delivery fails and leaves `sentAt` null. Server code reuses `toInvoiceDto`/`invoiceInclude` from `modules/invoices/service.ts` (the portal must add its own ownership filter).
+
+**A-10 safety rules (server-enforced):** free-text fields reject NUL characters (422); a subscription line total may not exceed 1,000,000,000.00 and a subscription total 10,000,000,000.00; `startDate` must be within two years in the past and five years ahead, `expiryDate` within 20 years of `startDate` (422 with a field error); a payment `date` may not be in the future (judged on the **business calendar date**, `BUSINESS_TZ`, default Asia/Kolkata) nor before the invoice `issueDate`. `PUT /api/users/:id` (ADMIN) renames or (de)activates STAFF/CUSTOMER accounts; administrator accounts are never editable (409), deactivation revokes every session at once, and a customer with ACTIVE/PAUSED subscriptions cannot be deactivated (409).
 
 ### Billing, taxes and discounts
 

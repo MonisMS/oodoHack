@@ -117,7 +117,10 @@ Steps: `npm ci`, set the environment below, `npm run db:deploy` (applies committ
 | `BETTER_AUTH_SECRET` | random, 32+ characters; the server refuses to start with the development default |
 | `BETTER_AUTH_URL` | the public **https** URL of the API (this makes the session cookie `Secure`) |
 | `CLIENT_ORIGIN` | the exact browser origin of the web app; this is the only origin allowed to make credentialed or state-changing calls |
-| `DEV_AUTH_ENABLED` | must be `false` (the server refuses to start otherwise; `x-dev-*` headers are rejected) |
+| `DEV_AUTH_ENABLED` | must be `false` (the server refuses to start otherwise; `x-dev-*` headers are rejected). In development it is off by default and, when on, honoured only for requests from the same machine |
+| `HOST` | address the API binds to; default `127.0.0.1` (set it deliberately behind a proxy on another host) |
+| `TRUST_PROXY` | `true` only behind a trusted reverse proxy; otherwise a client-supplied `X-Forwarded-For` is replaced by the socket address so rate limits cannot be bypassed |
+| `BUSINESS_TZ` | IANA zone for the business calendar date (payments, overdue, pause/close); default `Asia/Kolkata` |
 | `BILLING_CRON_ENABLED` | opt in with `true` after migrations; the UTC scheduler is wired and defaults to off |
 
 Security behaviour worth knowing: the browser session is an httpOnly, SameSite=Lax cookie; every state-changing request (including `/api/auth/*`) from a foreign `Origin` is refused with 403 (CSRF/login-CSRF defence, `middleware/origin-guard.ts`); Better Auth rate-limits sign-in, sign-up and password reset per IP using in-process memory (use a shared store before running several API instances); helmet headers are on. Serve the web app and `/api` from the same origin (reverse proxy), as the Vite dev proxy does. Over plain http the session cookie is not `Secure`, so use https for any real deployment. Run `TEST_DATABASE_URL=... npm test -w server` against a disposable local database to execute the integration and security suites (they are skipped without it).

@@ -3,7 +3,7 @@ import type { z } from 'zod';
 import { db } from '../../lib/db.js';
 import { AppError } from '../../lib/errors.js';
 import type { FrozenTax } from '../../lib/domain/invoice-draft.js';
-import { dateOnly, parseDate, todayUtc } from '../../lib/dates.js';
+import { dateOnly, parseDate, todayBusiness } from '../../lib/dates.js';
 import { lockRow } from '../../lib/locks.js';
 import type { Principal } from '../../middleware/auth.js';
 import { toPaymentDto } from '../payments/service.js';
@@ -26,7 +26,7 @@ export type InvoiceWithRelations = Prisma.InvoiceGetPayload<{ include: typeof in
  * Wire shape of the contract's Invoice, shared with the customer portal (D). `outstanding` and `overdue` are
  * A-04 additions so every screen shows the same derived values; overdue = open AND dueDate < today (UTC).
  */
-export function toInvoiceDto(i: InvoiceWithRelations, today = todayUtc()) {
+export function toInvoiceDto(i: InvoiceWithRelations, today = todayBusiness()) {
   const open = OPEN.includes(i.status);
   const dueDate = dateOnly(i.dueDate);
   return {
@@ -53,7 +53,7 @@ export async function list(q: Query, _actor: Principal) {
   if (q.customerId) where.customerId = q.customerId;
   if (q.planId) where.subscription = { planId: q.planId };
   if (q.from || q.to) where.issueDate = { ...(q.from ? { gte: parseDate(q.from) } : {}), ...(q.to ? { lte: parseDate(q.to) } : {}) };
-  const overdue: Prisma.InvoiceWhereInput = { status: { in: OPEN }, dueDate: { lt: parseDate(todayUtc()) } };
+  const overdue: Prisma.InvoiceWhereInput = { status: { in: OPEN }, dueDate: { lt: parseDate(todayBusiness()) } };
   if (q.overdue === 'true') Object.assign(where, overdue);
   if (q.overdue === 'false') where.NOT = overdue;
   if (q.search) where.OR = [
@@ -64,7 +64,7 @@ export async function list(q: Query, _actor: Principal) {
   const dir = q.sortOrder;
   const orderBy: Prisma.InvoiceOrderByWithRelationInput =
     q.sortBy === 'number' ? { number: dir } : q.sortBy === 'dueDate' ? { dueDate: dir } : q.sortBy === 'date' ? { issueDate: dir } : q.sortBy === 'name' ? { customerName: dir } : { createdAt: dir };
-  const today = todayUtc();
+  const today = todayBusiness();
   const [rows, total] = await Promise.all([
     db.invoice.findMany({ where, include: invoiceInclude, orderBy: [orderBy, { id: 'asc' }], skip: (q.page - 1) * q.pageSize, take: q.pageSize }),
     db.invoice.count({ where }),

@@ -28,6 +28,12 @@ describe.skipIf(!TEST_DB)('auth rate limiting (A-06)', () => {
     expect(statuses.slice(8)).toEqual([429, 429]);
   });
 
+  it('cannot be bypassed by forging X-Forwarded-For (the real socket address is used unless TRUST_PROXY is on)', async () => {
+    const statuses: number[] = [];
+    for (let i = 0; i < 12; i++) statuses.push((await request(app).post('/api/auth/sign-in/email').set('Origin', ORIGIN).set('X-Forwarded-For', `198.51.100.${i + 1}`).send({ email: 'spoof@example.com', password: 'Wr0ng!Passw' })).status);
+    expect(statuses.includes(429)).toBe(true);
+  });
+
   it('does not throttle ordinary API calls', async () => {
     for (let i = 0; i < 15; i++) expect((await request(app).get('/api/health')).status).toBe(200);
   });

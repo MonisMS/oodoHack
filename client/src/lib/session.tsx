@@ -46,7 +46,8 @@ async function run(call: () => Promise<AuthResponse>): Promise<ActionResult> {
 export function SessionProvider({ children }: { children: ReactNode }) {
   const { data, isPending } = authClient.useSession();
   const [devRole, setDevRole] = useState<Role>('ADMIN');
-  const user = data?.user ? { id: data.user.id, name: data.user.name, email: data.user.email, role: data.user.role as Role, isActive: data.user.isActive } : null;
+  // A deactivated account is treated as signed out even if its cookie has not been revoked yet.
+  const user = data?.user && data.user.isActive !== false ? { id: data.user.id, name: data.user.name, email: data.user.email, role: data.user.role as Role, isActive: data.user.isActive } : null;
   const useDev = devEnabled && !user && !isPending;
   const role = user ? user.role : useDev ? devRole : null;
   setApiSession(useDev ? { role: devRole, id: DEV_ID } : {});

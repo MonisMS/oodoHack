@@ -15,7 +15,11 @@ import { routes as module9 } from './modules/billing-engine/routes';
 import { routes as module10 } from './modules/payments/routes';
 import { routes as module11 } from './modules/reports/routes';
 import { routes as module12 } from './modules/portal/routes';
-function Home() { const { role } = useSession(); return <Navigate to={role === 'CUSTOMER' ? '/portal' : role ? '/dashboard' : '/login'} replace />; }
+function Home() {
+  const { role, status } = useSession();
+  if (status === 'loading') return <p role="status">Loading...</p>; // do not bounce a signed-in user to /login while the session loads
+  return <Navigate to={role === 'CUSTOMER' ? '/portal' : role ? '/dashboard' : '/login'} replace />;
+}
 export const router = createBrowserRouter([{ element: <AppLayout />, children: [
   { index: true, element: <Home /> },
   ...[...module0, ...module1, ...module2, ...module3, ...module4, ...module5, ...module6, ...module7, ...module8, ...module9, ...module10, ...module11, ...module12].map(route => ({ path: route.path, element: <RouteAccess roles={route.roles}>{route.element}</RouteAccess> })),

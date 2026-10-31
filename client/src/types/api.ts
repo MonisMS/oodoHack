@@ -22,6 +22,7 @@ export interface PaymentQuery extends ListQuery { invoiceId?: Id; customerId?: I
 export interface ReportQuery { from?: DateOnly; to?: DateOnly; customerId?: Id; planId?: Id; status?: SubscriptionStatus }
 export type PortalSubscriptionQuery = ListQuery & { status?: SubscriptionStatus };
 export type PortalInvoiceQuery = ListQuery & { status?: InvoiceStatus; overdue?: 'true' | 'false' };
+export interface UserUpdateInput { name?: string; isActive?: boolean }
 export interface User { id: Id; name: string; email: string; role: Role; isActive: boolean; createdAt: Timestamp }
 export interface SignupInput { name: string; email: string; password: string }
 export interface LoginInput { email: string; password: string }

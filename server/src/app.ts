@@ -1,7 +1,7 @@
 import express from 'express';
 import cors from 'cors';
 import helmet from 'helmet';
-import { allowedOrigins } from './lib/env.js';
+import { allowedOrigins, env } from './lib/env.js';
 import { originGuard } from './middleware/origin-guard.js';
 import { AppError, errorHandler } from './lib/errors.js';
 import { toNodeHandler } from 'better-auth/node';
@@ -9,6 +9,10 @@ import { auth } from './lib/auth.js';
 import { registerModules } from './modules/index.js';
 export const app = express();
 app.disable('x-powered-by');
+app.set('trust proxy', env.TRUST_PROXY);
+// Rate limiting keys on the client IP. A client-supplied X-Forwarded-For must not choose its own identity, so unless
+// the API sits behind a trusted proxy (TRUST_PROXY=true) the header is replaced by the real socket address.
+app.use((req, _res, next) => { if (!env.TRUST_PROXY) req.headers['x-forwarded-for'] = req.socket.remoteAddress ?? ''; next(); });
 app.use(helmet());
 app.use(cors({ origin: allowedOrigins, credentials: true }));
 // Cookie sessions need CSRF defence in depth: a state-changing browser request from another origin is refused.

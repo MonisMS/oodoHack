@@ -19,7 +19,9 @@ export const requireAuth: RequestHandler = async (req, _res, next) => {
       if (user.isActive === false || !parsedRole.success) return next(new AppError(401, 'UNAUTHENTICATED', 'Sign in to continue'));
       req.user = { id: user.id, role: parsedRole.data }; return next();
     }
-    if (!env.DEV_AUTH_ENABLED || env.NODE_ENV === 'production') return next(new AppError(401, 'UNAUTHENTICATED', 'Sign in to continue'));
+    // The development identity shortcut works only when explicitly enabled AND the request comes from this machine.
+    const loopback = ['127.0.0.1', '::1', '::ffff:127.0.0.1'].includes(req.socket.remoteAddress ?? '');
+    if (!env.DEV_AUTH_ENABLED || env.NODE_ENV === 'production' || !loopback) return next(new AppError(401, 'UNAUTHENTICATED', 'Sign in to continue'));
     const userId = id.safeParse(req.header('x-dev-user-id'));
     const userRole = role.safeParse(req.header('x-dev-role'));
     if (!userId.success || !userRole.success) return next(new AppError(401, 'UNAUTHENTICATED', 'Supply valid development identity headers'));

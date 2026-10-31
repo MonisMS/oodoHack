@@ -2,7 +2,7 @@ import { Prisma, type Payment as PaymentRow } from '@prisma/client';
 import type { z } from 'zod';
 import { db } from '../../lib/db.js';
 import { AppError } from '../../lib/errors.js';
-import { dateOnly, parseDate, todayUtc } from '../../lib/dates.js';
+import { dateOnly, parseDate, todayBusiness } from '../../lib/dates.js';
 import { lockRow } from '../../lib/locks.js';
 import type { Principal } from '../../middleware/auth.js';
 import type { paymentInput, paymentQuery } from './schemas.js';
@@ -42,9 +42,10 @@ export async function list(q: Query, _actor: Principal) {
 export async function recordPayment(input: Input, actor: Principal) {
   const row = await db.$transaction(async tx => {
     await lockRow(tx, 'Invoice', input.invoiceId, 'Invoice not found');
-    const invoice = await tx.invoice.findUniqueOrThrow({ where: { id: input.invoiceId }, select: { status: true, total: true } });
+    const invoice = await tx.invoice.findUniqueOrThrow({ where: { id: input.invoiceId }, select: { status: true, total: true, issueDate: true } });
     if (invoice.status !== 'CONFIRMED' && invoice.status !== 'PARTIALLY_PAID') throw new AppError(409, 'CONFLICT', `Payments can only be recorded against CONFIRMED or PARTIALLY_PAID invoices (this one is ${invoice.status})`);
-    if (input.date > todayUtc()) throw new AppError(422, 'VALIDATION_ERROR', 'Check the submitted fields', { date: ['Payment date cannot be in the future'] });
+    if (input.date > todayBusiness()) throw new AppError(422, 'VALIDATION_ERROR', 'Check the submitted fields', { date: ['Payment date cannot be in the future'] });
+    if (input.date < dateOnly(invoice.issueDate)) throw new AppError(422, 'VALIDATION_ERROR', 'Check the submitted fields', { date: ['Payment date cannot be before the invoice issue date'] });
     const paid = (await tx.payment.aggregate({ where: { invoiceId: input.invoiceId }, _sum: { amount: true } }))._sum.amount ?? new Prisma.Decimal(0);
     const amount = new Prisma.Decimal(input.amount);
     const outstanding = invoice.total.minus(paid);
