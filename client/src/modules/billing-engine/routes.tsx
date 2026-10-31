@@ -1,5 +1,5 @@
 import type { ModuleRoute } from '../../lib/routes';
-import IndexPage from './pages/IndexPage';
+import BillingPage from './pages/BillingPage';
 export const routes: ModuleRoute[] = [
-  { path: 'billing', element: <IndexPage title="Run billing" />, roles: ["ADMIN", "STAFF"] }
+  { path: 'billing', element: <BillingPage />, roles: ['ADMIN', 'STAFF'] },
 ];

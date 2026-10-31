@@ -1,7 +1,11 @@
 import type { ModuleRoute } from '../../lib/routes';
-import IndexPage from './pages/IndexPage';
+import TemplateDetailPage from './pages/TemplateDetailPage';
+import TemplateFormPage from './pages/TemplateFormPage';
+import TemplateListPage from './pages/TemplateListPage';
+const roles: ModuleRoute['roles'] = ['ADMIN', 'STAFF'];
 export const routes: ModuleRoute[] = [
-  { path: 'quotation-templates', element: <IndexPage title="Quotation templates" />, roles: ["ADMIN", "STAFF"] },
-  { path: 'quotation-templates/new', element: <IndexPage title="New template" />, roles: ["ADMIN", "STAFF"] },
-  { path: 'quotation-templates/:id', element: <IndexPage title="Template details" />, roles: ["ADMIN", "STAFF"] }
+  { path: 'quotation-templates', element: <TemplateListPage />, roles },
+  { path: 'quotation-templates/new', element: <TemplateFormPage />, roles },
+  { path: 'quotation-templates/:id', element: <TemplateDetailPage />, roles },
+  { path: 'quotation-templates/:id/edit', element: <TemplateFormPage />, roles },
 ];

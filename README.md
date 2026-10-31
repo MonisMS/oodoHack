@@ -118,7 +118,7 @@ Steps: `npm ci`, set the environment below, `npm run db:deploy` (applies committ
 | `BETTER_AUTH_URL` | the public **https** URL of the API (this makes the session cookie `Secure`) |
 | `CLIENT_ORIGIN` | the exact browser origin of the web app; this is the only origin allowed to make credentialed or state-changing calls |
 | `DEV_AUTH_ENABLED` | must be `false` (the server refuses to start otherwise; `x-dev-*` headers are rejected). In development it is off by default and, when on, honoured only for requests from the same machine |
-| `HOST` | address the API binds to; default `127.0.0.1` (set it deliberately behind a proxy on another host) |
+| `HOST` | address the API binds to; default `localhost` = both loopback addresses (reachable only from this machine). Set it deliberately behind a proxy on another host, e.g. `0.0.0.0` |
 | `TRUST_PROXY` | `true` only behind a trusted reverse proxy; otherwise a client-supplied `X-Forwarded-For` is replaced by the socket address so rate limits cannot be bypassed |
 | `BUSINESS_TZ` | IANA zone for the business calendar date (payments, overdue, pause/close); default `Asia/Kolkata` |
 | `BILLING_CRON_ENABLED` | opt in with `true` after migrations; the UTC scheduler is wired and defaults to off |
