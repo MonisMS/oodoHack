@@ -1,0 +1,246 @@
+import { afterAll, beforeAll, describe, expect, it } from 'vitest';
+import request from 'supertest';
+import type { Express } from 'express';
+
+// Integration tests for A-03 (quotation templates + subscriptions). Needs a disposable local PostgreSQL:
+//   TEST_DATABASE_URL=postgresql://user:pass@localhost:5432/brightloop_test npm test -w server
+// Every test creates its own uniquely named catalog rows and users; nothing is truncated.
+const TEST_DB = process.env.TEST_DATABASE_URL;
+const ORIGIN = 'http://localhost:5173';
+const PASSWORD = 'Str0ng!Passw';
+const uid = () => `${Date.now()}.${Math.random().toString(36).slice(2, 8)}`;
+const email = (tag: string) => `${tag}.${uid()}@example.com`;
+const DAY = 86_400_000;
+const iso = (offsetDays: number) => new Date(Date.now() + offsetDays * DAY).toISOString().slice(0, 10);
+
+describe.skipIf(!TEST_DB)('templates and subscriptions (A-03)', () => {
+  let app: Express; let db: typeof import('../../src/lib/db.js').db;
+  let staff: ReturnType<typeof request.agent>; let customerAgent: ReturnType<typeof request.agent>;
+  let customerId: string; let staffId: string;
+  let product: { id: string }; let otherProduct: { id: string }; let odoo: { id: string }; let otherProductVariant: { id: string };
+  let plan: { id: string }; // pausable=false, closableEarly=false, renewable=false, minQuantity 2, no window
+  let flexPlan: { id: string }; // pausable + closableEarly + renewable
+
+  const makePlan = (data: Record<string, unknown> = {}) => db.plan.create({ data: { name: `Plan ${uid()}`, price: '100.00', billingPeriod: 'MONTHLY', minQuantity: 1, autoClose: true, closableEarly: false, pausable: false, renewable: false, ...data } });
+  const body = (over: Record<string, unknown> = {}) => ({ customerId, planId: plan.id, startDate: iso(0), expiryDate: null, paymentTermsDays: 15, lines: [{ productId: product.id, quantity: 2 }], ...over });
+  const createSub = async (over: Record<string, unknown> = {}) => { const r = await staff.post('/api/subscriptions').send(body(over)); expect(r.status, JSON.stringify(r.body)).toBe(201); return r.body.data as { id: string; number: string; status: string };  };
+  const move = (id: string, to: string, extra: Record<string, unknown> = {}) => staff.post(`/api/subscriptions/${id}/transition`).send({ to, ...extra });
+  const activate = async (id: string) => { for (const to of ['QUOTATION', 'CONFIRMED', 'ACTIVE']) expect((await move(id, to)).status).toBe(200); };
+
+  beforeAll(async () => {
+    process.env.DATABASE_URL = TEST_DB; process.env.NODE_ENV = 'test'; process.env.DEV_AUTH_ENABLED = 'false';
+    ({ app } = await import('../../src/app.js')); ({ db } = await import('../../src/lib/db.js'));
+    const { createCredentialUser } = await import('../../src/lib/auth.js');
+    const staffEmail = email('substaff'); const customerEmail = email('subcust');
+    staffId = (await createCredentialUser({ name: 'Sub Staff', email: staffEmail, password: PASSWORD, role: 'STAFF' })).id;
+    customerId = (await createCredentialUser({ name: 'Sub Customer', email: customerEmail, password: PASSWORD, role: 'CUSTOMER' })).id;
+    staff = request.agent(app); customerAgent = request.agent(app);
+    for (const [agent, e] of [[staff, staffEmail], [customerAgent, customerEmail]] as const) expect((await agent.post('/api/auth/sign-in/email').set('Origin', ORIGIN).send({ email: e, password: PASSWORD })).status).toBe(200);
+    product = await db.product.create({ data: { name: `CRM ${uid()}`, salesPrice: '1000.00', costPrice: '400.00' } });
+    otherProduct = await db.product.create({ data: { name: `Other ${uid()}`, salesPrice: '50.00', costPrice: '10.00' } });
+    odoo = await db.productVariant.create({ data: { productId: product.id, attribute: 'Brand', value: 'Odoo', extraPrice: '560.00' } });
+    otherProductVariant = await db.productVariant.create({ data: { productId: otherProduct.id, attribute: 'Brand', value: 'X', extraPrice: '1.00' } });
+    plan = await makePlan({ minQuantity: 2 });
+    flexPlan = await makePlan({ pausable: true, closableEarly: true, renewable: true });
+  });
+  afterAll(async () => { await db?.$disconnect(); });
+
+  describe('quotation templates', () => {
+    it('creates, reads, edits and deactivates a template; unset prices inherit from the catalog', async () => {
+      const created = await staff.post('/api/quotation-templates').send({ name: `Tpl ${uid()}`, planId: plan.id, validityDays: 30, lines: [{ productId: product.id, variantId: odoo.id, quantity: 3 }, { productId: otherProduct.id, quantity: 1, unitPrice: '45.00' }] });
+      expect(created.status, JSON.stringify(created.body)).toBe(201);
+      const t = created.body.data;
+      expect(t.lines.map((l: { unitPrice: string | null }) => l.unitPrice)).toEqual([null, '45.00']);
+      expect(t.lines.map((l: { position: number }) => l.position)).toEqual([0, 1]);
+      expect((await staff.get(`/api/quotation-templates/${t.id}`)).body.data.id).toBe(t.id);
+      const edited = await staff.put(`/api/quotation-templates/${t.id}`).send({ name: 'Renamed', planId: plan.id, validityDays: 10, lines: [{ productId: product.id, quantity: 5 }] });
+      expect(edited.status).toBe(200); expect(edited.body.data).toMatchObject({ name: 'Renamed', validityDays: 10 }); expect(edited.body.data.lines).toHaveLength(1);
+      expect((await staff.delete(`/api/quotation-templates/${t.id}`)).status).toBe(204);
+      expect((await staff.get(`/api/quotation-templates/${t.id}`)).body.data.isActive).toBe(false);
+      const list = await staff.get('/api/quotation-templates?search=Renamed&pageSize=5');
+      expect(list.status).toBe(200); expect(list.body.data.some((x: { id: string }) => x.id === t.id)).toBe(true);
+    });
+
+    it('rejects inactive plans, products and a variant of another product', async () => {
+      const inactivePlan = await makePlan({ isActive: false }); const inactiveProduct = await db.product.create({ data: { name: `Off ${uid()}`, salesPrice: '1.00', costPrice: '1.00', isActive: false } });
+      const post = (over: Record<string, unknown>) => staff.post('/api/quotation-templates').send({ name: 'T', planId: plan.id, validityDays: 5, lines: [{ productId: product.id, quantity: 1 }], ...over });
+      expect((await post({ planId: inactivePlan.id })).body.error.fields.planId).toBeDefined();
+      expect((await post({ lines: [{ productId: inactiveProduct.id, quantity: 1 }] })).body.error.fields['lines.0.productId']).toBeDefined();
+      expect((await post({ lines: [{ productId: product.id, variantId: otherProductVariant.id, quantity: 1 }] })).body.error.fields['lines.0.variantId']).toBeDefined();
+      expect((await post({ planId: crypto.randomUUID() })).status).toBe(422);
+      expect((await staff.get(`/api/quotation-templates/${crypto.randomUUID()}`)).status).toBe(404);
+    });
+
+    it('is staff/admin only', async () => {
+      expect((await customerAgent.get('/api/quotation-templates')).status).toBe(403);
+      expect((await request(app).get('/api/quotation-templates')).status).toBe(401);
+    });
+  });
+
+  describe('create / price resolution / validation', () => {
+    it('creates a DRAFT with a numbered SUB, schedule anchored to the start date, and frozen resolved prices', async () => {
+      const r = await staff.post('/api/subscriptions').send(body({ startDate: '2026-01-31', lines: [{ productId: product.id, variantId: odoo.id, quantity: 2 }, { productId: product.id, variantId: odoo.id, quantity: 1, unitPrice: '900.00' }] }));
+      expect(r.status, JSON.stringify(r.body)).toBe(201);
+      const s = r.body.data;
+      expect(s).toMatchObject({ status: 'DRAFT', startDate: '2026-01-31', nextInvoiceDate: '2026-01-31', billingAnchorDay: 31, billingAnchorMonth: 1, templateId: null, expiryDate: null });
+      expect(s.number).toMatch(/^SUB\/\d{4}\/\d{5}$/);
+      expect(s.lines[0].unitPrice).toBe('1560.00'); // 1000 + 560, once
+      expect(s.lines[1].unitPrice).toBe('900.00'); // explicit price is final: variant extra NOT added again
+      expect(s.lines[0].description).toContain('Brand: Odoo');
+      expect(s.history).toEqual([]);
+      expect(s.allowedTransitions).toEqual(['QUOTATION', 'CLOSED']);
+    });
+
+    it('assigns unique sequential-style numbers under parallel creation', async () => {
+      const results = await Promise.all(Array.from({ length: 6 }, () => staff.post('/api/subscriptions').send(body())));
+      expect(results.every(r => r.status === 201)).toBe(true);
+      const numbers = results.map(r => r.body.data.number as string);
+      expect(new Set(numbers).size).toBe(6);
+    });
+
+    it('enforces customer, plan window, minimum quantity, catalog and date rules', async () => {
+      const windowed = await makePlan({ availableFrom: new Date('2031-01-01'), availableTo: new Date('2031-12-31') });
+      const inactiveCustomer = await db.user.create({ data: { name: 'Inactive C', email: email('inactive'), role: 'CUSTOMER', isActive: false } });
+      const post = (over: Record<string, unknown>) => staff.post('/api/subscriptions').send(body(over));
+      expect((await post({ customerId: staffId })).body.error.fields.customerId).toBeDefined(); // staff account is not a customer
+      expect((await post({ customerId: inactiveCustomer.id })).body.error.fields.customerId).toBeDefined();
+      expect((await post({ lines: [{ productId: product.id, quantity: 1 }] })).body.error.fields.lines[0]).toMatch(/minimum of 2/); // plan.minQuantity = 2
+      expect((await post({ lines: [{ productId: product.id, quantity: 1 }, { productId: otherProduct.id, quantity: 1 }] })).status).toBe(201); // quantities add up across products
+      expect((await post({ planId: windowed.id, startDate: iso(0) })).body.error.fields.startDate).toBeDefined();
+      expect((await post({ planId: windowed.id, startDate: '2031-01-01' })).status).toBe(201); // window is inclusive
+      expect((await post({ planId: windowed.id, startDate: '2031-12-31' })).status).toBe(201);
+      expect((await post({ startDate: '2026-05-10', expiryDate: '2026-05-09' })).status).toBe(422);
+      expect((await post({ lines: [] })).status).toBe(422);
+      expect((await post({ lines: [{ productId: product.id, variantId: otherProductVariant.id, quantity: 2 }] })).body.error.fields['lines.0.variantId']).toBeDefined();
+    });
+  });
+
+  describe('from template', () => {
+    it('copies lines, sets expiry = start + validityDays, links the template and freezes prices', async () => {
+      const t = (await staff.post('/api/quotation-templates').send({ name: `FT ${uid()}`, planId: plan.id, validityDays: 30, lines: [{ productId: product.id, variantId: odoo.id, quantity: 2 }] })).body.data;
+      const r = await staff.post('/api/subscriptions/from-template').send({ templateId: t.id, customerId, startDate: '2026-03-01', paymentTermsDays: 30 });
+      expect(r.status, JSON.stringify(r.body)).toBe(201);
+      const s = r.body.data;
+      expect(s).toMatchObject({ status: 'DRAFT', templateId: t.id, planId: plan.id, startDate: '2026-03-01', expiryDate: '2026-03-31', nextInvoiceDate: '2026-03-01', paymentTermsDays: 30 });
+      expect(s.lines[0]).toMatchObject({ quantity: 2, unitPrice: '1560.00' });
+      await db.product.update({ where: { id: product.id }, data: { salesPrice: '2000.00' } });
+      expect((await staff.get(`/api/subscriptions/${s.id}`)).body.data.lines[0].unitPrice).toBe('1560.00'); // later catalog changes never touch it
+      await db.product.update({ where: { id: product.id }, data: { salesPrice: '1000.00' } });
+      await staff.delete(`/api/quotation-templates/${t.id}`);
+      expect((await staff.get(`/api/subscriptions/${s.id}`)).status).toBe(200); // subscription survives template deactivation
+      expect((await staff.post('/api/subscriptions/from-template').send({ templateId: t.id, customerId, startDate: '2026-03-01', paymentTermsDays: 0 })).body.error.fields.templateId).toBeDefined();
+    });
+  });
+
+  describe('edit and delete', () => {
+    it('edits only DRAFT/QUOTATION and recomputes the schedule from the new start date', async () => {
+      const s = await createSub({ startDate: '2026-01-31' });
+      const edited = await staff.put(`/api/subscriptions/${s.id}`).send(body({ startDate: '2026-02-10', paymentTermsDays: 45, lines: [{ productId: otherProduct.id, quantity: 4 }] }));
+      expect(edited.status, JSON.stringify(edited.body)).toBe(200);
+      expect(edited.body.data).toMatchObject({ number: s.number, startDate: '2026-02-10', nextInvoiceDate: '2026-02-10', billingAnchorDay: 10, billingAnchorMonth: 2, paymentTermsDays: 45 });
+      expect(edited.body.data.lines).toHaveLength(1);
+      expect((await move(s.id, 'QUOTATION')).status).toBe(200);
+      expect((await staff.put(`/api/subscriptions/${s.id}`).send(body())).status).toBe(200);
+      expect((await move(s.id, 'CONFIRMED')).status).toBe(200);
+      expect((await staff.put(`/api/subscriptions/${s.id}`).send(body())).status).toBe(409);
+    });
+
+    it('hard-deletes only DRAFT subscriptions without invoices', async () => {
+      const draft = await createSub();
+      expect((await staff.delete(`/api/subscriptions/${draft.id}`)).status).toBe(204);
+      expect((await staff.get(`/api/subscriptions/${draft.id}`)).status).toBe(404);
+      expect((await staff.delete(`/api/subscriptions/${draft.id}`)).status).toBe(404);
+      const quoted = await createSub(); await move(quoted.id, 'QUOTATION');
+      expect((await staff.delete(`/api/subscriptions/${quoted.id}`)).status).toBe(409);
+      const withInvoice = await createSub();
+      await db.invoice.create({ data: { number: `INV/T/${uid()}`, subscriptionId: withInvoice.id, customerId, periodStart: new Date(iso(0)), periodEnd: new Date(iso(30)), issueDate: new Date(iso(0)), dueDate: new Date(iso(15)), customerName: 'C', customerEmail: 'c@example.com', subtotal: '10.00', taxTotal: '0.00', total: '10.00' } });
+      expect((await staff.delete(`/api/subscriptions/${withInvoice.id}`)).status).toBe(409);
+    });
+  });
+
+  describe('state machine and history', () => {
+    it('walks DRAFT -> QUOTATION -> CONFIRMED -> ACTIVE, recording actor and reason for each step', async () => {
+      const s = await createSub();
+      expect((await move(s.id, 'ACTIVE')).body.error.code).toBe('INVALID_TRANSITION'); // cannot skip steps
+      expect((await move(s.id, 'DRAFT')).status).toBe(409); // same state
+      const r1 = await move(s.id, 'QUOTATION', { reason: 'sent to customer' });
+      expect(r1.body.data.status).toBe('QUOTATION');
+      await move(s.id, 'CONFIRMED'); const done = await move(s.id, 'ACTIVE');
+      const h = done.body.data.history;
+      expect(h.map((e: { fromStatus: string; toStatus: string }) => `${e.fromStatus}>${e.toStatus}`)).toEqual(['DRAFT>QUOTATION', 'QUOTATION>CONFIRMED', 'CONFIRMED>ACTIVE']);
+      expect(h[0]).toMatchObject({ actorId: staffId, reason: 'sent to customer' });
+      expect(done.body.data.allowedTransitions).toEqual([]); // plan is not pausable/closable early
+      expect((await move(s.id, 'DRAFT')).body.error.code).toBe('INVALID_TRANSITION');
+    });
+
+    it('revalidates before moving forward (plan deactivated after the draft was created)', async () => {
+      const p = await makePlan(); const s = await createSub({ planId: p.id });
+      await db.plan.update({ where: { id: p.id }, data: { isActive: false } });
+      expect((await move(s.id, 'QUOTATION')).body.error.fields.planId).toBeDefined();
+      expect((await move(s.id, 'CLOSED')).status).toBe(200); // cancelling is still allowed
+    });
+
+    it('allows pause/resume only when the plan is pausable', async () => {
+      const fixed = await createSub(); await activate(fixed.id);
+      expect((await move(fixed.id, 'PAUSED')).body.error.code).toBe('INVALID_TRANSITION');
+      const flex = await createSub({ planId: flexPlan.id, lines: [{ productId: product.id, quantity: 1 }] }); await activate(flex.id);
+      expect((await move(flex.id, 'PAUSED')).body.data.status).toBe('PAUSED');
+      expect((await move(flex.id, 'ACTIVE')).body.data.status).toBe('ACTIVE');
+    });
+
+    it('closes early only when the plan allows it, but always once expired', async () => {
+      const locked = await createSub(); await activate(locked.id);
+      expect((await move(locked.id, 'CLOSED')).body.error.code).toBe('INVALID_TRANSITION');
+      const early = await createSub({ planId: flexPlan.id, lines: [{ productId: product.id, quantity: 1 }] }); await activate(early.id);
+      expect((await move(early.id, 'CLOSED')).body.data.status).toBe('CLOSED');
+      const expired = await createSub({ startDate: '2020-01-01', expiryDate: '2020-12-31' }); await activate(expired.id);
+      expect((await move(expired.id, 'CLOSED', { reason: 'expired' })).body.data.status).toBe('CLOSED');
+    });
+
+    it('renews a closed subscription only if renewable, with a valid renewalExpiryDate, keeping the invoice schedule', async () => {
+      const s = await createSub({ planId: flexPlan.id, startDate: '2020-01-01', expiryDate: '2020-12-31', lines: [{ productId: product.id, quantity: 1 }] });
+      await activate(s.id); expect((await move(s.id, 'PAUSED')).status).toBe(200);
+      expect((await move(s.id, 'ACTIVE')).body.error.code).toBe('INVALID_TRANSITION'); // expired: renew, don't resume
+      expect((await move(s.id, 'CLOSED')).status).toBe(200);
+      expect((await move(s.id, 'ACTIVE')).body.error.message).toMatch(/renewalExpiryDate is required/);
+      expect((await move(s.id, 'ACTIVE', { renewalExpiryDate: '2021-01-01' })).status).toBe(409); // not later than today
+      const renewed = await move(s.id, 'ACTIVE', { renewalExpiryDate: iso(365) });
+      expect(renewed.status, JSON.stringify(renewed.body)).toBe(200);
+      expect(renewed.body.data).toMatchObject({ status: 'ACTIVE', expiryDate: iso(365), nextInvoiceDate: '2020-01-01' }); // schedule preserved
+      const fixed = await createSub({ startDate: '2020-01-01', expiryDate: '2020-12-31' }); await activate(fixed.id); await move(fixed.id, 'CLOSED');
+      expect((await move(fixed.id, 'ACTIVE', { renewalExpiryDate: iso(365) })).body.error.message).toMatch(/cannot be renewed/);
+    });
+
+    it('lets exactly one of two concurrent identical transitions win and records one history event', async () => {
+      const s = await createSub();
+      const [a, b] = await Promise.all([move(s.id, 'QUOTATION'), move(s.id, 'QUOTATION')]);
+      expect([a.status, b.status].sort()).toEqual([200, 409]);
+      expect((await staff.get(`/api/subscriptions/${s.id}`)).body.data.history).toHaveLength(1);
+    });
+  });
+
+  describe('list, filters and access', () => {
+    it('filters by status/customer/search, paginates and caps the page size', async () => {
+      const s = await createSub(); await move(s.id, 'QUOTATION');
+      const byStatus = await staff.get(`/api/subscriptions?status=QUOTATION&customerId=${customerId}&pageSize=100`);
+      expect(byStatus.status).toBe(200);
+      expect(byStatus.body.data.every((x: { status: string; customerId: string }) => x.status === 'QUOTATION' && x.customerId === customerId)).toBe(true);
+      expect(byStatus.body.data.some((x: { id: string }) => x.id === s.id)).toBe(true);
+      const bySearch = await staff.get(`/api/subscriptions?search=${encodeURIComponent(s.number)}`);
+      expect(bySearch.body.data.map((x: { id: string }) => x.id)).toEqual([s.id]);
+      const page = await staff.get('/api/subscriptions?pageSize=2&sortBy=number&sortOrder=desc');
+      expect(page.body).toMatchObject({ page: 1, pageSize: 2 }); expect(page.body.data.length).toBeLessThanOrEqual(2); expect(page.body.total).toBeGreaterThan(2);
+      expect((await staff.get('/api/subscriptions?pageSize=1000')).status).toBe(422);
+    });
+
+    it('is staff/admin only for every endpoint', async () => {
+      const s = await createSub();
+      for (const [method, path] of [['get', '/api/subscriptions'], ['get', `/api/subscriptions/${s.id}`], ['post', `/api/subscriptions/${s.id}/transition`], ['delete', `/api/subscriptions/${s.id}`]] as const) {
+        expect((await customerAgent[method](path).send({ to: 'QUOTATION' })).status, path).toBe(403);
+        expect((await request(app)[method](path).send({ to: 'QUOTATION' })).status, path).toBe(401);
+      }
+      expect((await customerAgent.post('/api/subscriptions').send(body())).status).toBe(403);
+      expect((await staff.post('/api/subscriptions').send({ ...body(), status: 'ACTIVE', number: 'HACK' })).status).toBe(422); // strict input: no forged fields
+    });
+  });
+});
