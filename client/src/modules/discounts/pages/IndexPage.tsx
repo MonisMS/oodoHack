@@ -1,2 +1,2 @@
-import { ModulePage } from '../../../components/layout/ModulePage';
-export default function IndexPage({ title }: { title: string }) { return <ModulePage title={title} owner="A" />; }
+import { CatalogWorkspace } from '../../../components/catalog/CatalogWorkspace';
+export default function IndexPage(_props:{title?:string}){return <CatalogWorkspace kind='discounts'/>;}

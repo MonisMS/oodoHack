@@ -1,4 +1,3 @@
 import type { ReactNode } from 'react';
-export function EmptyState({ title, children }: { title: string; children?: ReactNode }) {
-  return <section className="rounded-xl border border-dashed bg-white p-10 text-center"><h2 className="font-medium">{title}</h2><div className="mx-auto mt-3 max-w-lg text-sm leading-6 text-slate-500">{children}</div></section>;
-}
+import { Icon } from './Icon';
+export function EmptyState({title,children,action,icon='box'}:{title:string;children?:ReactNode;action?:ReactNode;icon?:string}){return <section className="empty-state"><div className="empty-icon"><Icon name={icon} size={25}/></div><h2>{title}</h2><div className="empty-description">{children}</div>{action&&<div className="empty-action">{action}</div>}</section>;}
